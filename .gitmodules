@@ -1,0 +1,6 @@
+[submodule "deps/fastnoise2"]
+	path = deps/fastnoise2
+	url = https://github.com/Auburn/FastNoise2.git
+[submodule "deps/imglib"]
+	path = deps/imglib
+	url = https://github.com/caseymcc/imglib.git
