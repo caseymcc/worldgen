@@ -86,6 +86,7 @@ set(worldgen_source
     include/worldgen/fill.h
     include/worldgen/generator.h
     include/worldgen/perturbedWeather.h
+    source/perturbedWeather.cpp
     include/worldgen/progress.h
     include/worldgen/sortedVector.h
     include/worldgen/tectonics.h
@@ -100,7 +101,6 @@ set(worldgen_source
     include/worldgen/maths/math_helpers.h
 #generators
     include/worldgen/generators/equiRectWorldGenerator.h
-    include/worldgen/generators/equiRectWorldGenerator.inl
     source/generators/equiRectWorldGenerator.cpp
 #utils
     source/utils/colorMap.cpp

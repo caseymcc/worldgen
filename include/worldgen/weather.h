@@ -170,7 +170,7 @@ public:
 
         float value=(latitude-cell.lowerLatitude)/(cell.upperLatitude-cell.lowerLatitude);
 
-        glm::vec2 direction;
+//        glm::vec2 direction;
 
         return (cell.windDirectionUpper-cell.windDirectionLower)*value+cell.windDirectionLower;
     }

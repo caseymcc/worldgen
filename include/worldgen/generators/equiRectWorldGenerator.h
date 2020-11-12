@@ -16,8 +16,6 @@
 #define GLM_ENABLE_EXPERIMENTAL
 #include <glm/gtx/integer.hpp>
 
-#include <FastNoise/FastNoise.h>
-
 #undef None
 
 #include <cassert>
@@ -134,17 +132,18 @@ struct ThreadStorage
 //    std::unique_ptr<HastyNoise::VectorSet> regionVectorSet;
 };
 
-template<typename _Region, typename _Chunk>
+//template<typename _Region, typename _Chunk>
 class EquiRectWorldGenerator
 {
 public:
+    class Hidden;
 //    typedef typename _Grid::RegionType Region;
 //
 //    typedef typename _Grid::ChunkType ChunkType;
 //    typedef std::unique_ptr<ChunkType> UniqueChunkType;
 //
-    typedef _Region Region;
-    typedef _Chunk Chunk;
+//    typedef _Region Region;
+//    typedef _Chunk Chunk;
 
     typedef std::vector<InfluenceCell> InfluenceMap;
 
@@ -225,15 +224,17 @@ private:
 //    std::unique_ptr<HastyNoise::NoiseSIMD> m_cellularNoise;
 //    std::unique_ptr<HastyNoise::NoiseSIMD> m_continentCellular;
 
-    FastNoise::SmartNode<FastNoise::OpenSimplex2> m_os2Noise;
+    std::unique_ptr<Hidden> m_hidden;
 
-    FastNoise::SmartNode<FastNoise::DomainScale> m_domainScale;
-    FastNoise::SmartNode<FastNoise::DomainWarpGradient> m_domainWarp;
-    FastNoise::SmartNode<FastNoise::DomainWarpFractalIndependant> m_domainWarpFractal;
-    FastNoise::SmartNode<FastNoise::FractalFBm> m_fractalFbmNoise;
-
-    FastNoise::SmartNode<FastNoise::CellularValue> m_cellularNoise;
-    FastNoise::SmartNode<FastNoise::CellularDistance> m_cellularDistanceNoise;
+//    FastNoise::SmartNode<FastNoise::OpenSimplex2> m_os2Noise;
+//
+//    FastNoise::SmartNode<FastNoise::DomainScale> m_domainScale;
+//    FastNoise::SmartNode<FastNoise::DomainWarpGradient> m_domainWarp;
+//    FastNoise::SmartNode<FastNoise::DomainWarpFractalIndependant> m_domainWarpFractal;
+//    FastNoise::SmartNode<FastNoise::FractalFBm> m_fractalFbmNoise;
+//
+//    FastNoise::SmartNode<FastNoise::CellularValue> m_cellularNoise;
+//    FastNoise::SmartNode<FastNoise::CellularDistance> m_cellularDistanceNoise;
 
     int m_continentSeed;
 
@@ -277,6 +278,6 @@ private:
 
 }//namespace worldgen
 
-#include "worldgen/generators/equiRectWorldGenerator.inl"
+//#include "worldgen/generators/equiRectWorldGenerator.inl"
 
 #endif //_worldgen_equiRectEquiRectWorldGenerator_h_

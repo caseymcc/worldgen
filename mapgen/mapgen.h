@@ -9,17 +9,7 @@ using namespace gl;
 
 #include <imgui.h>
 
-struct WorldRegion
-{
-
-};
-
-struct WorldChunk
-{
-
-};
-
-typedef worldgen::EquiRectWorldGenerator<WorldRegion, WorldChunk> WorldGenerator;
+typedef worldgen::EquiRectWorldGenerator WorldGenerator;
 
 class MapGen
 {
