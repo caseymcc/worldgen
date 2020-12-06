@@ -5,6 +5,10 @@ World generator is a procedural world genereator using the [FastNoise2 library](
 
 - Documentation (WIP) - https://github.com/caseymcc/worldgen/wiki
 
+## Lots of thanks go to
+- [RedBlobGames](https://www.redblobgames.com/x/1843-planet-generation/)
+- [Experilous](http://experilous.com/1/blog/post/procedural-planet-generation)
+
 ## Current Featues
 - Simple Plate tectonics
 - Weather Cells
