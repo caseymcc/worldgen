@@ -1,5 +1,5 @@
 #include "worldgen/perturbedWeather.h"
-#include <fastnoise/FastNoise.h>
+#include <FastNoise/FastNoise.h>
 
 namespace worldgen
 {
@@ -223,6 +223,22 @@ size_t PerturbedWeatherBands::getBandIndex(const glm::vec2 &coord)
             return i;
     }
     return m_bandsInfo.size()-1;
+}
+
+float PerturbedWeatherBands::getPressure(const glm::vec2 &coord)
+{
+    size_t index=getCellIndex(coord);
+    int x=(int)floor(coord.x/glm::two_pi<float>()*m_size.x);
+
+    WeatherCell &cell=m_cells[index];
+    WeatherCellInfo &info=m_cellsInfo[index][x];
+
+    if(info.size<=0.0f)
+        return cell.pressureLower;
+
+    float value=clamp((coord.y-info.lowerLatitude)/info.size, 0.0f, 1.0f);
+
+    return cell.pressureLower+((cell.pressureUpper-cell.pressureLower)*value);
 }
 
 float PerturbedWeatherBands::getMoisture(const glm::vec2 &coord)

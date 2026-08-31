@@ -12,7 +12,7 @@ namespace worldgen
 template<class _Type>
 inline const _Type &limit(const _Type &value, const _Type &high)
 {
-    else if(value>high)
+    if(value>high)
         return high;
     return value;
 }

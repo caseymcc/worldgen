@@ -1,1 +1,7 @@
 build
+
+# symlink created by scripts/configure.sh so tooling finds the current build's database
+compile_commands.json
+
+# written by mapgen beside whatever it is run from
+imgui.ini

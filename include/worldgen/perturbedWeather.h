@@ -32,6 +32,7 @@ public:
     glm::vec2 getWindDirection(const glm::vec2 &coord);
     size_t getBandIndex(const glm::vec2 &coord);
     float getMoisture(const glm::vec2 &coord);
+    float getPressure(const glm::vec2 &coord);
 
 private:
     glm::ivec2 m_size;

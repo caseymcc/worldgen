@@ -1,54 +1,32 @@
-cmake_minimum_required (VERSION 3.12)
+cmake_minimum_required (VERSION 3.15)
 
 option(WORLDGEN_MAPGEN "Build test app" ON)
+option(WORLDGEN_SHARED "Build as shared lib" OFF)
+option(WORLDGEN_FORCE_RELEASERUNTIME "Force using release runtime in debug" OFF)
 
 ##########################################
-#HUNTER caching
-set(HUNTER_STATUS_DEBUG ON)
-set(HUNTER_KEEP_PACKAGE_SOURCES ON)
-set(
-    HUNTER_CACHE_SERVERS
-    "https://github.com/huntercache/voxigen"
-    CACHE
-    STRING
-    "Default cache server"
-)
-
-string(COMPARE EQUAL "$ENV{TRAVIS}" "true" is_travis)
-string(COMPARE EQUAL "$ENV{APPVEYOR}" "True" is_appveyor)
-string(COMPARE EQUAL "$ENV{GITHUB_USER_PASSWORD}" "" password_is_empty)
-
-if((is_travis OR is_appveyor) AND NOT password_is_empty)
-  option(HUNTER_RUN_UPLOAD "Upload cache binaries" ON)
+#vcpkg
+#
+#Dependencies are declared in vcpkg.json. Manifest features have to be selected
+#before project() runs, so the mapgen-only packages are gated here.
+if(WORLDGEN_MAPGEN)
+    list(APPEND VCPKG_MANIFEST_FEATURES "mapgen")
 endif()
-message(STATUS "Hunter upload: ${HUNTER_RUN_UPLOAD}")
-set(
-    HUNTER_PASSWORDS_PATH
-    "${CMAKE_CURRENT_LIST_DIR}/cmake/Hunter/passwords.cmake"
-    CACHE
-    FILEPATH
-    "Hunter passwords"
-)
+
+#Pick the vcpkg toolchain up from VCPKG_ROOT unless the caller passed their own
+#-DCMAKE_TOOLCHAIN_FILE.
+if(NOT DEFINED CMAKE_TOOLCHAIN_FILE AND DEFINED ENV{VCPKG_ROOT})
+    set(CMAKE_TOOLCHAIN_FILE "$ENV{VCPKG_ROOT}/scripts/buildsystems/vcpkg.cmake"
+        CACHE STRING "Vcpkg toolchain file")
+    message(STATUS "Using vcpkg toolchain: ${CMAKE_TOOLCHAIN_FILE}")
+endif()
 ##########################################
-
-include(${CMAKE_CURRENT_LIST_DIR}/cmake/Hunter/HunterGate.cmake)
-
-HunterGate(
-    URL "https://github.com/cpp-pm/hunter/archive/v0.23.267.tar.gz"
-    SHA1 "9c5c7fa6e17c2ae15dd922184bc7c51235aaae70"
-    LOCAL
-)
 
 project(worldgen VERSION 0.0.1)
 
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_CXX_EXTENSIONS OFF)
-
-#variable to accumalte all target locations for debug info
-set(workgen_library_targets
-)
-include(${CMAKE_CURRENT_LIST_DIR}/cmake/targetInfo.cmake)
 
 #setup build folders
 set(CMAKE_RUNTIME_OUTPUT_DIRECTORY ${PROJECT_BINARY_DIR}/bin/)
@@ -71,14 +49,32 @@ endif()
 
 set_property(GLOBAL PROPERTY USE_FOLDERS ON)
 
+if(WORLDGEN_FORCE_RELEASERUNTIME)
+    add_compile_options("/MD")
+endif()
+
 add_subdirectory(deps)
 
-hunter_add_package(glm)
 find_package(glm CONFIG REQUIRED)
-hunter_add_package(RapidJSON)
 find_package(RapidJSON CONFIG REQUIRED)
 
+#RapidJSON ships upstream's config, which exports include dirs but no imported
+#target. Normalise it so the rest of the file can just link a target.
+if(NOT TARGET RapidJSON::rapidjson)
+    add_library(RapidJSON::rapidjson INTERFACE IMPORTED)
+    if(RAPIDJSON_INCLUDE_DIRS)
+        set(worldgen_rapidjson_includes ${RAPIDJSON_INCLUDE_DIRS})
+    else()
+        set(worldgen_rapidjson_includes ${RapidJSON_INCLUDE_DIRS})
+    endif()
+    set_target_properties(RapidJSON::rapidjson PROPERTIES
+        INTERFACE_INCLUDE_DIRECTORIES "${worldgen_rapidjson_includes}"
+    )
+endif()
+
 set(worldgen_source
+#generic
+    include/generic/io/fs.h
 #core
     include/worldgen/biome.h
     source/biome.cpp
@@ -102,6 +98,7 @@ set(worldgen_source
 #generators
     include/worldgen/generators/equiRectWorldGenerator.h
     source/generators/equiRectWorldGenerator.cpp
+    source/generators/detailPass.cpp
 #utils
     source/utils/colorMap.cpp
     include/worldgen/utils/colorMap.h
@@ -110,67 +107,110 @@ set(worldgen_source
 )
 
 set(worldgen_libraries
-    glm
+    glm::glm
     RapidJSON::rapidjson
     FastNoise
 )
 
 source_group("source" FILES ${worldgen_source})
 
-add_library(worldgen
-    ${worldgen_source}
-)
+if(WORLDGEN_SHARED)
+    add_library(worldgen SHARED
+        ${worldgen_source}
+    )
+else()
+    add_library(worldgen
+        ${worldgen_source}
+    )
+endif()
 
 if("${CMAKE_CXX_COMPILER_ID}" STREQUAL "Clang" OR "${CMAKE_CXX_COMPILER_ID}" STREQUAL "GNU" OR "${CMAKE_CXX_COMPILER_ID}" STREQUAL "AppleClang")
     target_compile_options(worldgen PUBLIC "-lstdc++fs")
     target_link_libraries(worldgen PUBLIC stdc++fs)
 endif()
 
+#Hunter built glm with GLM_FORCE_CTOR_INIT for gcc; vcpkg ships a stock glm, so
+#the define has to be applied here instead.
+if("${CMAKE_CXX_COMPILER_ID}" STREQUAL "GNU")
+    target_compile_definitions(worldgen PUBLIC GLM_FORCE_CTOR_INIT)
+endif()
+
 include_directories(${CMAKE_CURRENT_LIST_DIR}/include)
+#The library's own headers have to travel with the TARGET, not just with this directory. A bare
+#include_directories() compiles worldgen's own sources and exports nothing, so anything linking
+#worldgen as a library - another cmake project, or Unreal through the CMakeTarget plugin - gets the
+#libraries and not the headers, and fails on the first #include <worldgen/...>.
+target_include_directories(worldgen PUBLIC ${CMAKE_CURRENT_LIST_DIR}/include)
+target_include_directories(worldgen PUBLIC ${CMAKE_CURRENT_LIST_DIR}/deps/easing)
 target_link_libraries(worldgen PUBLIC ${worldgen_libraries})
 
+if(WORLDGEN_FORCE_RELEASERUNTIME)
+    message(STATUS "Forcing release CRT")
+#    set_property(TARGET worldgen PROPERTY MSVC_RUNTIME_LIBRARY "MultiThreadedDLL")
+    if(MSVC)
+        target_compile_options(worldgen PUBLIC "/MD")
+    endif()
+endif()
+
 if(WORLDGEN_MAPGEN)
-    hunter_add_package(imgui)
     find_package(imgui CONFIG REQUIRED)
-    hunter_add_package(glfw)
-    find_package(glfw3 REQUIRED)
-
-    hunter_add_package(glbinding)
+    find_package(glfw3 CONFIG REQUIRED)
     find_package(glbinding CONFIG REQUIRED)
-
-    hunter_add_package(CreateLaunchers)
-    find_package(CreateLaunchers CONFIG REQUIRED)
-    
-    include(CreateLaunchers)
+    find_package(GLEW REQUIRED)
 
     set(worldgen_mapgen_sources
-       
+       mapgen/chunkViewer.cpp
+       mapgen/chunkViewer.h
+       mapgen/imageWidget.cpp
+       mapgen/imageWidget.h
+       mapgen/imguiHelpers.cpp
+       mapgen/imguiHelpers.h
+       mapgen/imguiWidget.cpp
+       mapgen/imguiWidget.h
+       mapgen/infoViewer.cpp
+       mapgen/infoViewer.h
        mapgen/initGlew.cpp
        mapgen/initGlew.h
        mapgen/main.cpp
        mapgen/mapgen.cpp
        mapgen/mapgen.h
+       mapgen/legendViewer.cpp
+       mapgen/legendViewer.h
+       mapgen/legend.cpp
+       mapgen/legend.h
+       mapgen/terrainPalette.h
+       mapgen/regionViewer.cpp
+       mapgen/regionViewer.h
+       mapgen/uiData.h
+       mapgen/uiDataWidget.cpp
+       mapgen/uiDataWidget.h
+       mapgen/worldControls.cpp
+       mapgen/worldControls.h
+       mapgen/worldViewer.cpp
+       mapgen/worldViewer.h
     )
 
     source_group("source" FILES ${worldgen_mapgen_sources})
-    
+
     add_executable(mapgen ${worldgen_mapgen_sources})
 
     target_include_directories(mapgen PRIVATE ${CMAKE_CURRENT_LIST_DIR})
-    target_link_libraries(mapgen worldgen 
-        glfw 
-        imgui::imgui 
+
+    target_link_libraries(mapgen worldgen
+        glfw
+        imgui::imgui
         glbinding::glbinding
+        GLEW::GLEW
         imglib
     )
 
-    set(mapgen_vs_enviroment_dir)
-    get_target_link_directories(mapgen_vs_enviroment_dir ${mapgen_public_libraries})
-    set(mapgen_vs_working_dir ${CMAKE_CURRENT_LIST_DIR})
-    
-    create_target_launcher(mapgen
-        RUNTIME_LIBRARY_DIRS "${mapgen_vs_enviroment_dir}"
-        WORKING_DIRECTORY "${mapgen_vs_working_dir}"
+#    if(WORLDGEN_FORCE_RELEASERUNTIME)
+#        if(MSVC)
+#            target_compile_options(mapgen PUBLIC "/MD")
+#        endif()
+#    endif()
+
+    set_target_properties(mapgen PROPERTIES
+        VS_DEBUGGER_WORKING_DIRECTORY "${CMAKE_CURRENT_LIST_DIR}"
     )
 endif()
-

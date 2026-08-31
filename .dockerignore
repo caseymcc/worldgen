@@ -1,0 +1,10 @@
+# The image builds a toolchain, not the project - the repository is bind mounted at run time - so
+# none of this needs to be in the build context.
+build/
+deps/
+dep/
+resources/
+docs/
+.git/
+*.png
+*.ppm

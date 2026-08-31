@@ -6,7 +6,7 @@ namespace worldgen
 {
 
 
-RandomColorGenerator::Colormap RandomColorGenerator::colorDictionary=[=]() -> RandomColorGenerator::Colormap {
+RandomColorGenerator::Colormap RandomColorGenerator::colorDictionary=[]() -> RandomColorGenerator::Colormap {
     return RandomColorGenerator::loadColorBounds();
 }();
 

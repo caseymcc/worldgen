@@ -1,8 +1,10 @@
 #ifndef _worldgen_coords_h_
 #define _worldgen_coords_h_
 
+#define GLM_ENABLE_EXPERIMENTAL
 #include <glm/glm.hpp>
 #include <glm/gtc/constants.hpp>
+#include <glm/gtx/norm.hpp>
 
 #include <math.h>
 #include <vector>
@@ -138,7 +140,7 @@ template<Projections _Projection>
 float perpendicularDistanceSqrd(const typename ProjectionDetails<_Projection>::PointType &point, const typename ProjectionDetails<_Projection>::PointType &lineStart,
     const typename ProjectionDetails<_Projection>::PointType &lineEnd)
 {
-    using PointType=ProjectionDetails<_Projection>::PointType;
+    using PointType=typename ProjectionDetails<_Projection>::PointType;
 
     PointType delta=lineEnd-lineStart;
     PointType pointDelta=point-lineStart;

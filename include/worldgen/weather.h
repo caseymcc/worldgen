@@ -9,6 +9,8 @@
 #include <math.h>
 #include <string>
 #include <algorithm>
+#include <limits>
+#include <vector>
 
 namespace worldgen
 {
@@ -36,7 +38,12 @@ struct WeatherCell
 //    float latitude;
 //    float size;
     float moisture;
-    
+
+    //0 where air rises out of the cell and 1 where it sinks into it. Rising air leaves a low
+    //pressure zone behind it, sinking air piles up into a high one.
+    float pressureLower;
+    float pressureUpper;
+
     glm::vec2 windDirectionLower;
     glm::vec2 windDirectionUpper;
 };
@@ -165,14 +172,24 @@ public:
     {
         const WeatherCell cell=getCell(latitude);
 
-        if(latitude<-1.396)
-            latitude=latitude;
-
         float value=(latitude-cell.lowerLatitude)/(cell.upperLatitude-cell.lowerLatitude);
 
 //        glm::vec2 direction;
 
         return (cell.windDirectionUpper-cell.windDirectionLower)*value+cell.windDirectionLower;
+    }
+
+    float getPressure(float latitude)
+    {
+        const WeatherCell &cell=getCell(latitude);
+        float size=cell.upperLatitude-cell.lowerLatitude;
+
+        if(size<=0.0f)
+            return cell.pressureLower;
+
+        float value=std::clamp((latitude-cell.lowerLatitude)/size, 0.0f, 1.0f);
+
+        return cell.pressureLower+((cell.pressureUpper-cell.pressureLower)*value);
     }
 
     size_t getBandIndex(float latitude)
@@ -219,6 +236,124 @@ protected:
 constexpr float rads(float degrees)
 {
     return M_PI/180.0f*degrees;
+}
+
+//How many circulation cells a planet runs per hemisphere, from how fast it spins. The reference
+//gives these as measured regimes rather than a formula, and points out that four times earth's
+//rate breaks the otherwise linear trend without explaining why - that is kept as given rather than
+//smoothed into a curve.
+inline int weatherCellsForRotation(float rotationRate)
+{
+    if(rotationRate<1.0f)
+        return 1;   //half earth's rate and slower, a single cell running pole to equator
+    if(rotationRate<3.0f)
+        return 3;   //earth, at one to two times its rate
+    if(rotationRate<6.0f)
+        return 7;   //four times, the break in the trend
+    return 5;       //eight times
+}
+
+inline std::string weatherCellName(int index, int cellsPerHemisphere, bool north)
+{
+    std::string hemisphere=north?"North":"South";
+
+    if(cellsPerHemisphere==3)
+    {//the earthlike case has names worth keeping
+        const char *names[3]={"Hadley", "Ferrell", "Polar"};
+
+        return hemisphere+" "+names[index]+" Cell";
+    }
+    return hemisphere+" Cell "+std::to_string(index+1);
+}
+
+//Moisture falls off from the equatorial cell out to the polar one. The three anchors are earth's
+//values, so a three cell world reproduces them exactly.
+inline float weatherCellMoisture(int index, int cellsPerHemisphere)
+{
+    if(cellsPerHemisphere<=1)
+        return 0.95f;
+
+    float t=(float)index/(float)(cellsPerHemisphere-1);
+
+    if(t<0.5f)
+        return 0.95f+((0.75f-0.95f)*(t/0.5f));
+    return 0.75f+((0.65f-0.75f)*((t-0.5f)/0.5f));
+}
+
+//Builds a hemisphere-symmetric set of circulation cells. Cells divide each hemisphere evenly,
+//which reproduces earth's 0/30/60/90 boundaries exactly at three cells per hemisphere. They
+//alternate direct (air rising on the equatorward edge, sinking on the poleward one) and indirect,
+//so the boundaries alternate low and high pressure outward from the equator - the intertropical
+//convergence zone, the subtropical ridge, the polar front, and so on.
+//rotationDirection is +1 for an earthlike prograde spin and -1 for a retrograde one, which
+//reverses the coriolis deflection and with it every east-west wind component.
+inline std::vector<WeatherCell> generateWeatherCells(int cellsPerHemisphere, float rotationDirection=1.0f)
+{
+    std::vector<WeatherCell> cells;
+
+    if(cellsPerHemisphere<1)
+        cellsPerHemisphere=1;
+
+    float step=(float)M_PI_2/(float)cellsPerHemisphere;
+    float spin=(rotationDirection<0.0f)?-1.0f:1.0f;
+
+    cells.reserve((size_t)cellsPerHemisphere*2);
+
+    //south first, polar-most cell leading, so the list runs south to north
+    for(int i=cellsPerHemisphere-1; i>=0; --i)
+    {
+        WeatherCell cell;
+
+        cell.name=weatherCellName(i, cellsPerHemisphere, false);
+        cell.lowerLatitude=-step*(float)(i+1);
+        cell.upperLatitude=-step*(float)i;
+        cell.moisture=weatherCellMoisture(i, cellsPerHemisphere);
+
+        if((i%2)==0)
+        {//direct cell
+            cell.windDirectionLower=glm::vec2(0.0f, 1.0f);
+            cell.windDirectionUpper=glm::vec2(-spin, 0.0f);
+        }
+        else
+        {
+            cell.windDirectionLower=glm::vec2(spin, 0.0f);
+            cell.windDirectionUpper=glm::vec2(0.0f, -1.0f);
+        }
+
+        //a boundary an even number of cells out from the equator is one the air rises through
+        cell.pressureLower=(((i+1)%2)==0)?0.0f:1.0f;
+        cell.pressureUpper=((i%2)==0)?0.0f:1.0f;
+
+        cells.push_back(cell);
+    }
+
+    for(int i=0; i<cellsPerHemisphere; ++i)
+    {
+        WeatherCell cell;
+
+        cell.name=weatherCellName(i, cellsPerHemisphere, true);
+        cell.lowerLatitude=step*(float)i;
+        cell.upperLatitude=step*(float)(i+1);
+        cell.moisture=weatherCellMoisture(i, cellsPerHemisphere);
+
+        if((i%2)==0)
+        {//direct cell
+            cell.windDirectionLower=glm::vec2(-spin, 0.0f);
+            cell.windDirectionUpper=glm::vec2(0.0f, -1.0f);
+        }
+        else
+        {
+            cell.windDirectionLower=glm::vec2(0.0f, 1.0f);
+            cell.windDirectionUpper=glm::vec2(spin, 0.0f);
+        }
+
+        cell.pressureLower=((i%2)==0)?0.0f:1.0f;
+        cell.pressureUpper=(((i+1)%2)==0)?0.0f:1.0f;
+
+        cells.push_back(cell);
+    }
+
+    return cells;
 }
 
 //const CellBand g_cellBands[]=
@@ -271,6 +406,78 @@ constexpr float rads(float degrees)
 //
 //    return g_cellBands[index];
 //}
+
+//A real planet does not run a smooth pressure band around each latitude - the highs break up into
+//discrete cells sitting over the oceans and over cold continental interiors, and the winds spiral
+//out of them rather than blowing straight down the band. This is one of those cells.
+struct PressureCentre
+{
+    glm::vec2 position;  //longitude, latitude in radians
+    glm::vec3 point3d;
+    float strength;
+    float radius;        //angular radius in latitude, longitude is stretched against this
+};
+
+//How strongly a centre is felt at a point. Cells are kept elliptical, wider in longitude than in
+//latitude, because that is the shape these systems actually take.
+inline float pressureCentreInfluence(const PressureCentre &centre, const glm::vec2 &position, float longitudeStretch=1.8f)
+{
+    float deltaLatitude=position.y-centre.position.y;
+    float deltaLongitude=position.x-centre.position.x;
+
+    //the map wraps, take the short way round
+    while(deltaLongitude>M_PI)
+        deltaLongitude-=2.0f*(float)M_PI;
+    while(deltaLongitude<-M_PI)
+        deltaLongitude+=2.0f*(float)M_PI;
+
+    deltaLongitude=deltaLongitude*cos(position.y); //longitude closes up towards the poles
+
+    if(centre.radius<=0.0f)
+        return 0.0f;
+
+    float scaledLatitude=deltaLatitude/centre.radius;
+    float scaledLongitude=deltaLongitude/(centre.radius*longitudeStretch);
+    float distance2=(scaledLatitude*scaledLatitude)+(scaledLongitude*scaledLongitude);
+
+    return centre.strength*exp(-distance2);
+}
+
+//Surface wind spiralling out of a high. Outflow turns clockwise in the northern hemisphere and
+//anticlockwise in the southern one, so the direction is the outward radial turned by the outflow
+//angle. Returned in local (east, north) axes.
+inline glm::vec2 pressureCentreWind(const PressureCentre &centre, const glm::vec2 &position, float outflowAngle, float spin=1.0f)
+{
+    float deltaLongitude=position.x-centre.position.x;
+
+    while(deltaLongitude>M_PI)
+        deltaLongitude-=2.0f*(float)M_PI;
+    while(deltaLongitude<-M_PI)
+        deltaLongitude+=2.0f*(float)M_PI;
+
+    //bearing from the centre out to the point, in local east/north axes
+    float east=cos(position.y)*sin(deltaLongitude);
+    float north=(cos(centre.position.y)*sin(position.y))-(sin(centre.position.y)*cos(position.y)*cos(deltaLongitude));
+    glm::vec2 radial(east, north);
+
+    float length=glm::length(radial);
+
+    if(length<=std::numeric_limits<float>::epsilon())
+        return glm::vec2(0.0f, 0.0f);
+
+    radial=radial/length;
+
+    //clockwise in the north, anticlockwise in the south, and a retrograde planet reverses both
+    float angle=outflowAngle*spin;
+
+    if(position.y<0.0f)
+        angle=-angle;
+
+    float cosAngle=cos(angle);
+    float sinAngle=sin(angle);
+
+    return glm::vec2((radial.x*cosAngle)+(radial.y*sinAngle), (radial.y*cosAngle)-(radial.x*sinAngle));
+}
 
 inline float getTemperature(float latitude)
 {

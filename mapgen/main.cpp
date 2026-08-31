@@ -4,10 +4,11 @@
 #define GLFW_INCLUDE_NONE
 #include <GLFW/glfw3.h>
 
+#include "uiData.h"
 #include "initGlew.h"
 #include "mapgen.h"
 
-#include <imgui.h>
+//#include <imgui.h>
 #include <imgui_impl_opengl3.h>
 #include <imgui_impl_glfw.h>
 
@@ -25,7 +26,7 @@ void debugMessage(GLenum source, GLenum type, GLuint id, GLenum severity, GLsize
 }
 
 
-MapGen mapgen;
+mapgen::App mapgenApp;
 
 int main(int argc, char ** argv)
 {
@@ -75,7 +76,7 @@ int main(int argc, char ** argv)
 
     ImGui::StyleColorsDark();
 
-    mapgen.initialize();
+    mapgenApp.initialize();
 
     glfwSetFramebufferSizeCallback(window, framebuffer_size_callback);
     glfwSetKeyCallback(window, key_callback);
@@ -104,7 +105,7 @@ int main(int argc, char ** argv)
         ImGui_ImplGlfw_NewFrame();
         ImGui::NewFrame();
 
-        mapgen.draw();
+        mapgenApp.draw();
     
         ImGui::Render();
         glClear(GL_COLOR_BUFFER_BIT);
@@ -133,7 +134,7 @@ int main(int argc, char ** argv)
 void framebuffer_size_callback(GLFWwindow *window, int width, int height)
 {
     glViewport(0, 0, width, height);
-    mapgen.setSize(width, height);
+    mapgenApp.setSize(width, height);
 }
 
 //void mouse_callback(GLFWwindow* window, double xpos, double ypos)

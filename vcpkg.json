@@ -1,0 +1,31 @@
+{
+  "$schema": "https://raw.githubusercontent.com/microsoft/vcpkg-tool/main/docs/vcpkg.schema.json",
+  "name": "worldgen",
+  "version": "0.0.1",
+  "description": "Procedural world generator built on plate tectonics, weather cells and FastNoise2",
+  "homepage": "https://github.com/caseymcc/worldgen",
+  "license": "MIT",
+  "dependencies": [
+    "glm",
+    "rapidjson",
+    "libpng",
+    "libjpeg-turbo"
+  ],
+  "features": {
+    "mapgen": {
+      "description": "Build the mapgen viewer application",
+      "dependencies": [
+        "glfw3",
+        "glbinding",
+        "glew",
+        {
+          "name": "imgui",
+          "features": [
+            "glfw-binding",
+            "opengl3-binding"
+          ]
+        }
+      ]
+    }
+  }
+}
