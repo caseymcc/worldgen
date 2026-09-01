@@ -53,6 +53,8 @@ typedef struct
     uint8_t depositExposed;
     uint8_t road;
     uint8_t onTheBeatenTrack;
+    uint8_t navigable;     /* a boat can work up this far */
+    uint8_t crossing;      /* CrossingKind: where a road gets over a river */
 
     /* the civilization layer */
     int32_t polity;        /* which state holds this ground, -1 for none */
@@ -65,6 +67,7 @@ typedef struct
     float traffic;         /* share of the world's trade passing through */
     int32_t barrier;       /* BarrierType */
     int32_t ruinKind;      /* RuinKind, 0 for none */
+    int32_t catchment;     /* the settlement that works this ground, -1 if nobody does */
 } wgCell;
 
 typedef struct
@@ -162,6 +165,12 @@ typedef struct
 
 WORLDGEN_EXPORT int32_t wgFindFoundingSites(wgWorld *world, int32_t species, int32_t spacing,
     wgFoundingSite *out, int32_t max);
+
+/* How long on foot from one cell to another, in hours, using the roads and the navigable water
+   where they help. Negative if there is no way at all - the sea is not walkable, and some ground is
+   behind it. A game asks this far more often than it asks for a route. */
+WORLDGEN_EXPORT float wgTravelHours(wgWorld *world, int32_t fromX, int32_t fromY,
+    int32_t toX, int32_t toY);
 
 /* --- keeping it --- */
 /*

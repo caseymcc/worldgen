@@ -1148,6 +1148,124 @@ void EquiRectWorldGenerator::findFoundingSites(int species, int count, int spaci
     }
 }
 
+float EquiRectWorldGenerator::travelHours(const glm::ivec2 &from, const glm::ivec2 &to)
+{
+    const glm::ivec2 &influenceSize=m_descriptorValues.m_influenceSize;
+
+    if(m_influenceMap.empty())
+        return -1.0f;
+
+    int ax=wrapDetailIndex(from.x, influenceSize.x);
+    int bx=wrapDetailIndex(to.x, influenceSize.x);
+
+    if((from.y<0)||(from.y>=influenceSize.y)||(to.y<0)||(to.y>=influenceSize.y))
+        return -1.0f;
+
+    size_t start=((size_t)from.y*influenceSize.x)+ax;
+    size_t goal=((size_t)to.y*influenceSize.x)+bx;
+
+    if((m_influenceMap[start].heightBase<0.5f)||(m_influenceMap[goal].heightBase<0.5f))
+        return -1.0f;
+
+    if(start==goal)
+        return 0.0f;
+
+    const RoadThresholds &roadRules=m_descriptorValues.m_roadRules;
+    const TradeThresholds &carriage=m_descriptorValues.m_tradeRules;
+
+    //A day's walk over open country, which is what everything else is measured against. A made
+    //road roughly doubles it and a boat on working water does better still.
+    const float openPace=4.0f;      //kilometres in an hour
+    const float roadPace=6.0f;
+    const float waterPace=8.0f;
+
+    float cellKm=((float)m_descriptorValues.m_influenceGridSize.x
+        *m_descriptorValues.m_metresPerBlock)/1000.0f;
+
+    struct Traveller
+    {
+        float m_estimate;
+        float m_hours;
+        size_t m_index;
+
+        bool operator>(const Traveller &other) const { return m_estimate>other.m_estimate; }
+    };
+
+    std::vector<float> spent(m_influenceMap.size(), std::numeric_limits<float>::max());
+    std::priority_queue<Traveller, std::vector<Traveller>, std::greater<Traveller>> open;
+
+    spent[start]=0.0f;
+    open.push(Traveller{0.0f, 0.0f, start});
+
+    while(!open.empty())
+    {
+        Traveller current=open.top();
+
+        open.pop();
+
+        if(current.m_hours>spent[current.m_index])
+            continue;
+
+        if(current.m_index==goal)
+            return current.m_hours;
+
+        int x=(int)(current.m_index%influenceSize.x);
+        int y=(int)(current.m_index/influenceSize.x);
+
+        for(size_t n=0; n<8; ++n)
+        {
+            int ny=y+detailOffsets[n][1];
+
+            if((ny<0)||(ny>=influenceSize.y))
+                continue;
+
+            size_t index=((size_t)ny*influenceSize.x)+wrapDetailIndex(x+detailOffsets[n][0], influenceSize.x);
+            const InfluenceCell &step=m_influenceMap[index];
+
+            if(step.heightBase<0.5f)
+                continue;   //a walk, not a voyage
+
+            float length=((detailOffsets[n][0]!=0)&&(detailOffsets[n][1]!=0))?1.41421f:1.0f;
+            float pace=openPace;
+
+            if(step.road)
+                pace=roadPace;
+            else if(step.navigable)
+                pace=waterPace;
+
+            //Rough ground is slower whatever is under foot, and the terrain cost already says how
+            //rough it is - scaled so ordinary country comes out at the plain pace.
+            float elevationHere=heightToElevation(step.heightBase, 0.5f,
+                m_descriptorValues.m_maxElevation, m_descriptorValues.m_elevationCurve);
+            float going=roadCost(step, elevationHere, 0.0f, carriage, roadRules)/carriage.m_landCost;
+
+            if(going<1.0f)
+                going=1.0f;
+
+            float hours=current.m_hours+((length*cellKm*going)/pace);
+
+            if(hours>=spent[index])
+                continue;
+
+            spent[index]=hours;
+
+            //straight-line distance at the best pace anything could manage: never an overestimate,
+            //so the search stays admissible
+            int hx=abs(bx-((int)(index%influenceSize.x)));
+
+            if(hx>influenceSize.x/2)
+                hx=influenceSize.x-hx;
+
+            int hy=to.y-((int)(index/influenceSize.x));
+            float remaining=(sqrtf((float)((hx*hx)+(hy*hy)))*cellKm)/waterPace;
+
+            open.push(Traveller{hours+remaining, hours, index});
+        }
+    }
+
+    return -1.0f;
+}
+
 void EquiRectWorldGenerator::rebuildAfterLoad()
 {
     if(m_influenceMap.empty())

@@ -125,9 +125,14 @@ good country fills in unevenly rather than radiating from its single best cell. 
 first, so smaller places gather round the towns, with sociability updated as the map fills.
 
 Measured: 860-1060 places a world, 67-98 towns; **every settlement has water** (the veto holds); and
-the weights discriminate — towns are 97% on the beaten track against 63% for steadings, which is the
-accessibility weight (0.70 vs 0.05) doing its job. Nearest neighbour is 4.1 km at worldgen's own
-scale, which is about right for medieval villages.
+the weights discriminate — towns stand **2 to 3 times nearer the trade network** than steadings do,
+which is the accessibility weight (0.70 against 0.05) doing its job. Nearest neighbour is 4.1 km at
+worldgen's own scale, which is about right for medieval villages.
+
+⚠️ Measure that on `remoteness`, not on `onTheBeatenTrack`. The flag covers a third of all land, so
+both kinds are usually inside it: on one world in four it reads 73% against 74% and looks like the
+weight has stopped working, when it is the metric throwing the signal away. The continuous field
+orders them on every world tried.
 
 `findFoundingSites()` asks the same model on behalf of one people, over EMPTY ground, and returns
 places to found a settlement. It is deliberately not a top-N by interest: that gives four sites of
@@ -136,7 +141,7 @@ CHARACTER has not been offered yet, and each is described by what makes it unusu
 average candidate rather than by its highest criterion — otherwise every site on good country gets
 the same sentence about water, because all good country has water.
 
-### Roads
+### Roads and crossings
 
 `Road`/`RoadThresholds` in `settlement.h`, a pass after the settlements. Nothing decides that lanes
 should meet at a town: each place is joined to a LARGER one near it, every road is the cheapest line
@@ -145,6 +150,56 @@ towns because each of them was separately cheapest — the same mechanism that p
 mountain fronts. Measured: 98% of settlements connected, every town on a road, and **55% of road
 length is shared**, which is the re-use weight actually merging lanes rather than running them
 alongside each other.
+
+⚠️ **A road pays to cross a river; it does not follow one.** Reusing `travelCost` put a quarter of
+the network in the riverbed (24% of road cells on rivers against a 10% base rate) because trade
+discounts water — a barge can use a river and a cart cannot. `roadCost()` undoes that discount and
+charges for the crossing instead, which takes it to 11%. Where a road does cross is recorded as a
+`Crossing`, a ford or a bridge by discharge; ~170 a world, half of them carrying more than one road.
+The crossing cost does NOT decide where a road crosses, which was measured rather than assumed:
+51% of the river cells within reach carry less water than the one chosen, at every steepness tried,
+because roads here average 3.7 cells and there is no room to detour. That is a detail-pass question.
+
+### The test suite
+
+`tests/worldgenTests.cpp`, built as `worldgen_tests` (option `WORLDGEN_TESTS`, on) and registered
+with ctest. 93 checks over four seeds plus the C boundary, in about a second.
+
+They assert **properties of any world** rather than expected values, because every number here moves
+when a parameter moves and a test pinned to one would be edited away on the first tune. Each one
+exists because it caught something: water leaving the map, a river entering a region and leaving it,
+the same seed giving the same ground, a settlement having something to drink, roads crossing rivers
+instead of following them.
+
+⚠️ **Three of them are the SECOND version of the check.** "Every channel sample has a lower
+neighbour" passed while a fifth of the channel could not drain, because the two banks of a meander
+are neighbours and are not the same part of a river. "Every entry connects to the exit through
+channel cells" failed on a river that reached the sea, because the sample at its mouth is sea rather
+than channel. And the settlement weighting looked broken on one world in four until it was measured
+on a field rather than a flag. In this project the measurement has been the weak link more often
+than the model, so a failing check earns a look at the check first.
+
+### Names, navigable water, catchments, travel
+
+`include/worldgen/naming.h`. Names are **built, not drawn from a list**: a list runs out, and worse
+it has no accent — every people would name from the same bag and a dwarven hold would sound like an
+elven one. Each people gets its own onsets, vowels, codas and endings, and where the ground says
+something the name says it too, which is what most real place names turn out to be.
+
+⚠️ **Only sometimes from the ground.** Naming every place after what is under it reads as
+systematic: a forested country came out Dimwood, Leanwood, Mudbroukwood and Wedekwood — one joke
+told four times. A crossing always earns its name, because those are the ones real places are named
+for; otherwise it is the ground about a third of the time. Names key off a hash of the CELL, not the
+index, so inserting a settlement does not rename everything after it.
+
+`navigable` marks the rivers a boat can work — 5% of river cells, the biggest only. `catchment` is
+the ground each place actually works, by a multi-source walk bounded at a day's reach: **not** who
+claims it, which the states already answered and which covers far more than anybody walks to. 67% of
+land is worked by somebody; the median catchment is 4 cells.
+
+`travelHours()` answers how long on foot between two cells, using roads and navigable water where
+they help. Negative when there is no way at all, which is correct rather than a failure — the sea is
+not walkable. A game asks this far more often than it asks for a route. ~0.3 ms a query.
 
 ### A boundary with no C++ in it
 

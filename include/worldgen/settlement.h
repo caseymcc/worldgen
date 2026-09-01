@@ -213,6 +213,37 @@ struct FoundingSite
 //is joined to a larger one near it, every road is the cheapest line the ground allows, and following
 //a road somebody else already cut is nearly free - which is the whole mechanism. Nothing decides
 //that four lanes should meet at a town; they meet there because each of them was cheapest.
+//Where a road gets over a river. Not decided anywhere: a road that has to pay to cross will cross
+//at the cheapest water it can reach, so these land at the narrow places by themselves - and a
+//crossing outlives whoever built it, which is why so many towns are named after one.
+enum class CrossingKind
+{
+    None,
+    Ford,    //shallow enough to walk a cart through
+    Bridge   //too much water for that
+};
+
+inline const char *crossingKindName(CrossingKind kind)
+{
+    switch(kind)
+    {
+    case CrossingKind::Ford:   return "Ford";
+    case CrossingKind::Bridge: return "Bridge";
+    default: break;
+    }
+    return "None";
+}
+
+struct Crossing
+{
+    Crossing(): m_cell(0), m_kind(CrossingKind::None), m_discharge(0.0f), m_roads(0) {}
+
+    size_t m_cell;
+    CrossingKind m_kind;
+    float m_discharge;   //millions of cubic metres a year going under it
+    size_t m_roads;      //how many ways use this one crossing
+};
+
 struct Road
 {
     Road(): m_from(0), m_to(0), m_cost(0.0f), m_length(0) {}
@@ -239,13 +270,70 @@ struct RoadThresholds
         //cutoff every steading searches the whole map for a town it will never walk to.
         m_reach=34.0f;
         m_searchLimit=42.0f;
+
+        //A river is a road's obstacle, not its highway. The trade layer discounts water because a
+        //trade route can float down it; a cart cannot, and has to be got across. Making the
+        //crossing expensive is also what SITES it: a road that must pay to cross will cross where
+        //paying is cheapest, which is the narrowest water it can reach - the same reasoning that
+        //puts a real ford where it is.
+        m_crossingCost=3.0f;
+        m_crossingDischarge=900.0f;  //cost doubles about here
+        m_crossingSteepness=6.0f;
+
+        //A boat is a road that costs nothing to build and nothing to keep, and before there were
+        //made roads it carried nearly everything heavy. Where one can get to is a fact about
+        //discharge, and the point it stops is the head of navigation - which is where the goods
+        //come off the water and a town grows.
+        m_navigableDischarge=2600.0f;
+
+        //How far a place will work ground: what can be walked to, worked, and walked back from in a
+        //day. Beyond it the land is nobody's, whatever the map says about who claims it.
+        m_catchmentReach=9.0f;
+        m_bridgeDischarge=1200.0f;   //above this it wants a bridge rather than a ford
     }
 
     float m_reuseWeight;
     float m_climbPenalty;
     float m_reach;
     float m_searchLimit;
+    float m_crossingCost;
+    float m_crossingDischarge;
+    float m_crossingSteepness;
+    float m_navigableDischarge;
+    float m_catchmentReach;
+    float m_bridgeDischarge;
 };
+
+//What a cart pays for a cell. The terrain classes are the trade layer's, because the ground is the
+//same ground - what differs is the water: trade discounts a river because it can float down it, and
+//a road has to get across.
+inline float roadCost(const InfluenceCell &cell, float elevation, float relief,
+    const TradeThresholds &ground, const RoadThresholds &rules)
+{
+    float cost=travelCost(cell, elevation, relief, false, ground);
+
+    if(cell.water==WaterBody::River)
+    {
+        if(ground.m_riverDiscount>0.0f)
+            cost/=ground.m_riverDiscount;   //undo the highway; a cart cannot use it
+
+        //Steeply, not linearly, so a wide river costs several times a narrow one - which is what a
+        //bridge actually costs against a ford.
+        //
+        //It does NOT decide where a road crosses, and that was worth measuring rather than
+        //assuming: of the river cells within reach of a crossing, 51% carry less water than the one
+        //chosen, at every steepness from 0 to 20. Not because there is no choice - discharge varies
+        //by 78% among the local alternatives - but because roads here average 3.7 cells between
+        //neighbouring settlements and there is no room to detour. Picking the narrow spot is a
+        //question for the detail pass, where a road has hundreds of metres to play with.
+        float water=(rules.m_crossingDischarge>0.0f)
+            ?(cell.riverDischarge/rules.m_crossingDischarge):0.0f;
+
+        cost*=rules.m_crossingCost*(1.0f+(water*water*rules.m_crossingSteepness));
+    }
+
+    return cost;
+}
 
 //--- the interest model ---
 //Emilien et al: a weighted sum of independent criteria, each in -1 to 1, where any single -1 makes

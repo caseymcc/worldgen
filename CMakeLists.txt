@@ -1,6 +1,7 @@
 cmake_minimum_required (VERSION 3.15)
 
 option(WORLDGEN_MAPGEN "Build test app" ON)
+option(WORLDGEN_TESTS "Build the test suite" ON)
 option(WORLDGEN_SHARED "Build as shared lib" OFF)
 option(WORLDGEN_FORCE_RELEASERUNTIME "Force using release runtime in debug" OFF)
 
@@ -215,4 +216,14 @@ if(WORLDGEN_MAPGEN)
     set_target_properties(mapgen PROPERTIES
         VS_DEBUGGER_WORKING_DIRECTORY "${CMAKE_CURRENT_LIST_DIR}"
     )
+endif()
+
+if(WORLDGEN_TESTS)
+    #Invariants rather than expected values: the world changes whenever a parameter moves, and a
+    #test that pinned an exact number would have to be edited on every tune.
+    add_executable(worldgen_tests tests/worldgenTests.cpp)
+    target_link_libraries(worldgen_tests worldgen)
+
+    enable_testing()
+    add_test(NAME worldgen COMMAND worldgen_tests)
 endif()

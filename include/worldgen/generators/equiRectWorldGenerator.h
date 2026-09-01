@@ -16,6 +16,7 @@
 #include "worldgen/trade.h"
 #include "worldgen/city.h"
 #include "worldgen/settlement.h"
+#include "worldgen/naming.h"
 #include "worldgen/history.h"
 #include "worldgen/detail.h"
 #include "worldgen/weather.h"
@@ -355,11 +356,20 @@ public:
     const std::vector<City> &getCities() { return m_cities; }
     const std::vector<Settlement> &getSettlements() { return m_settlements; }
     const std::vector<Road> &getRoads() { return m_roads; }
+    const std::vector<Crossing> &getCrossings() { return m_crossings; }
 
     //Places to found a settlement of one's own, best first and kept apart so they are a choice
     //between countries rather than between corners of one valley. Asked for rather than generated
     //with the world, because which ground is good depends on who is asking.
     void findFoundingSites(int species, int count, int spacing, std::vector<FoundingSite> &sites);
+
+    //How long it takes to get from one cell to another on foot, in hours, using the roads and the
+    //navigable water where they help. Negative if there is no way at all - which happens, because
+    //the sea is not walkable and some ground is behind it.
+    //
+    //A game needs this far more often than it needs a route: how long until the traders arrive, how
+    //long before a raid reaches us, how far can a messenger get before dark.
+    float travelHours(const glm::ivec2 &from, const glm::ivec2 &to);
     const std::vector<SpeciesHabitat> &getSpecies() { return m_descriptorValues.m_species; }
     const InfluenceMap &getInfluenceMap() { return m_influenceMap; }
     const glm::ivec2 &getInfluenceMapSize() { return m_descriptorValues.m_influenceSize; }
@@ -390,6 +400,7 @@ public:
     std::vector<City> m_cities;
     std::vector<Settlement> m_settlements;
     std::vector<Road> m_roads;
+    std::vector<Crossing> m_crossings;
     std::vector<glm::vec2> m_influencePoints;
     std::vector<std::vector<glm::vec2>> m_influenceLines;
 

@@ -202,6 +202,8 @@ static void fillCell(const worldgen::InfluenceCell &from, const worldgen::EquiRe
     to.depositExposed=from.depositExposed?1:0;
     to.road=from.road?1:0;
     to.onTheBeatenTrack=from.onTheBeatenTrack?1:0;
+    to.navigable=from.navigable?1:0;
+    to.crossing=(uint8_t)from.crossing;
 
     to.polity=from.polity;
     to.culturalRegion=from.culturalRegion;
@@ -213,6 +215,7 @@ static void fillCell(const worldgen::InfluenceCell &from, const worldgen::EquiRe
     to.traffic=from.traffic;
     to.barrier=from.barrier;
     to.ruinKind=from.ruinKind;
+    to.catchment=from.catchment;
 }
 
 int32_t wgReadCells(const wgWorld *world, wgCell *out, int32_t max)
@@ -699,6 +702,14 @@ wgWorld *wgWorldLoad(const char *path)
     world->m_generator.rebuildAfterLoad();
 
     return world;
+}
+
+float wgTravelHours(wgWorld *world, int32_t fromX, int32_t fromY, int32_t toX, int32_t toY)
+{
+    if(!world)
+        return -1.0f;
+
+    return world->m_generator.travelHours(glm::ivec2(fromX, fromY), glm::ivec2(toX, toY));
 }
 
 const char *wgLastError(void)

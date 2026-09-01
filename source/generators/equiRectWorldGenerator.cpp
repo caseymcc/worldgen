@@ -5561,11 +5561,13 @@ void EquiRectWorldGenerator::generatePlates(Progress &progress)
         //else has already cut is nearly free to follow. Roads meet at towns because each of them was
         //separately cheapest, which is the same mechanism that made the borders land on mountains.
         m_roads.clear();
+        m_crossings.clear();
 
         for(size_t i=0; i<influenceMapSize; i++)
         {
             m_influenceMap[i].road=false;
             m_influenceMap[i].roadTraffic=0.0f;
+            m_influenceMap[i].crossing=(int)CrossingKind::None;
         }
 
         if(m_settlements.size()>1)
@@ -5694,7 +5696,7 @@ void EquiRectWorldGenerator::generatePlates(Progress &progress)
                         float rise=elevation[index]-elevation[current.m_index];
                         float climb=(run>0.0f)?std::max(rise/run, 0.0f):0.0f;
 
-                        float cost=travelCost(step, elevation[index], relief[index], false, carriage)
+                        float cost=roadCost(step, elevation[index], relief[index], carriage, roadRules)
                             *length*(1.0f+(roadRules.m_climbPenalty*climb));
 
                         //following a way already cut is nearly free, which is what makes lanes join
@@ -5740,9 +5742,40 @@ void EquiRectWorldGenerator::generatePlates(Progress &progress)
 
                 while(true)
                 {
-                    m_influenceMap[step].road=true;
-                    m_influenceMap[step].roadTraffic+=1.0f;
+                    InfluenceCell &along=m_influenceMap[step];
+
+                    along.road=true;
+                    along.roadTraffic+=1.0f;
                     road.m_length++;
+
+                    //a road on water is a road getting over it
+                    if(along.water==WaterBody::River)
+                    {
+                        if(along.crossing==(int)CrossingKind::None)
+                        {
+                            Crossing crossing;
+
+                            crossing.m_cell=step;
+                            crossing.m_kind=(along.riverDischarge>=roadRules.m_bridgeDischarge)
+                                ?CrossingKind::Bridge:CrossingKind::Ford;
+                            crossing.m_discharge=along.riverDischarge;
+                            crossing.m_roads=1;
+
+                            along.crossing=(int)crossing.m_kind;
+                            m_crossings.push_back(crossing);
+                        }
+                        else
+                        {
+                            for(size_t k=0; k<m_crossings.size(); ++k)
+                            {
+                                if(m_crossings[k].m_cell==step)
+                                {
+                                    m_crossings[k].m_roads++;
+                                    break;
+                                }
+                            }
+                        }
+                    }
 
                     if(came[step]==step)
                         break;
@@ -5751,6 +5784,133 @@ void EquiRectWorldGenerator::generatePlates(Progress &progress)
                 }
 
                 m_roads.push_back(road);
+            }
+        }
+
+
+        //--- navigable water, and the ground each place works ---
+        //A boat is a road that costs nothing to build and nothing to keep, and before there were
+        //made roads it carried nearly everything heavy. Where one can reach is a fact about
+        //discharge the drainage pass already worked out.
+        for(size_t i=0; i<influenceMapSize; i++)
+        {
+            InfluenceCell &cell=m_influenceMap[i];
+
+            cell.navigable=(cell.heightBase>=0.5f)&&(cell.water==WaterBody::River)
+                &&(cell.riverDischarge>=m_descriptorValues.m_roadRules.m_navigableDischarge);
+            cell.catchment=-1;
+        }
+
+        //Which place works which ground. Not who CLAIMS it - the states already answered that, and
+        //a realm claims a great deal more than anybody walks to. This is the land somebody can get
+        //to, work, and get back from, which is what decides whether a valley is taken.
+        if(!m_settlements.empty())
+        {
+            const RoadThresholds &roadRules=m_descriptorValues.m_roadRules;
+            const TradeThresholds &carriage=m_descriptorValues.m_tradeRules;
+
+            struct Worker
+            {
+                float m_cost;
+                size_t m_index;
+
+                bool operator>(const Worker &other) const { return m_cost>other.m_cost; }
+            };
+
+            std::vector<float> effort(influenceMapSize, std::numeric_limits<float>::max());
+            std::priority_queue<Worker, std::vector<Worker>, std::greater<Worker>> walking;
+
+            //Every place starts at once, so ground goes to whoever can most easily reach it rather
+            //than to whoever happens to be nearest as the crow flies.
+            for(size_t k=0; k<m_settlements.size(); ++k)
+            {
+                size_t at=m_settlements[k].m_cell;
+
+                effort[at]=0.0f;
+                m_influenceMap[at].catchment=(int)k;
+                walking.push(Worker{0.0f, at});
+            }
+
+            while(!walking.empty())
+            {
+                Worker current=walking.top();
+
+                walking.pop();
+
+                if(current.m_cost>effort[current.m_index])
+                    continue;
+
+                int x=(int)(current.m_index%influenceSize.x);
+                int y=(int)(current.m_index/influenceSize.x);
+
+                for(size_t n=0; n<8; ++n)
+                {
+                    int ny=y+offsets[n][1];
+
+                    if((ny<0)||(ny>=influenceSize.y))
+                        continue;
+
+                    size_t index=((size_t)ny*influenceSize.x)+wrapIndex(x+offsets[n][0], influenceSize.x);
+                    const InfluenceCell &step=m_influenceMap[index];
+
+                    if(step.heightBase<0.5f)
+                        continue;   //nobody farms the sea
+
+                    float length=((offsets[n][0]!=0)&&(offsets[n][1]!=0))?1.41421f:1.0f;
+                    float cost=roadCost(step, elevation[index], relief[index], carriage, roadRules)*length;
+
+                    //a made road, or water a boat can work, is far less of a day than open country
+                    if(step.road)
+                        cost*=0.35f;
+                    else if(step.navigable)
+                        cost*=0.5f;
+
+                    float total=current.m_cost+cost;
+
+                    if((total>roadRules.m_catchmentReach)||(total>=effort[index]))
+                        continue;
+
+                    effort[index]=total;
+                    m_influenceMap[index].catchment=m_influenceMap[current.m_index].catchment;
+                    walking.push(Worker{total, index});
+                }
+            }
+        }
+
+        //--- what everything is called ---
+        //A place was a pair of coordinates and a realm was "Elf realm", which is fine for a debug
+        //view and useless the moment anything shows a neighbour to somebody. Each people names in
+        //its own sounds, and where the ground says something - a ford, a river mouth, a wood, a
+        //working - the name says it too, which is what most real place names turn out to be.
+        for(size_t k=0; k<m_settlements.size(); ++k)
+        {
+            Settlement &place=m_settlements[k];
+            Phonology sounds=phonologyFor((size_t)((place.m_species>=0)?place.m_species:0));
+            const InfluenceCell &cell=m_influenceMap[place.m_cell];
+
+            //named for the place rather than for its turn in the list, so inserting one earlier
+            //does not rename everything after it
+            place.m_name=placeName(sounds, cell,
+                nameHash((uint32_t)place.m_cell, (uint32_t)m_descriptorValues.seed),
+                cell.crossing!=(int)CrossingKind::None);
+        }
+
+        for(size_t k=0; k<m_polities.size(); ++k)
+        {
+            Polity &realm=m_polities[k];
+            size_t who=(size_t)((realm.m_species>=0)?realm.m_species:0);
+            Phonology sounds=phonologyFor(who);
+            std::string people=(who<species.size())?species[who].m_name:std::string("folk");
+
+            if(realm.m_enclave)
+            {
+                realm.m_name=capitalise(nameStem(sounds,
+                    nameHash((uint32_t)realm.m_core, (uint32_t)m_descriptorValues.seed+7u)))+" holdout";
+            }
+            else
+            {
+                realm.m_name=realmName(sounds, people,
+                    nameHash((uint32_t)realm.m_core, (uint32_t)m_descriptorValues.seed));
             }
         }
 
