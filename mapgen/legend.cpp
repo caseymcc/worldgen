@@ -136,6 +136,35 @@ Legend buildLayerLegend(DisplayLayers layer, WorldGenerator *generator)
         }
         break;
 
+    case DisplayLayers::Settlements:
+        legend.m_title="Settlements";
+        legend.m_description="The tier below a realm: where ordinary people live, sited by weighted "
+            "interest with a hard veto. Nothing stands without water within reach.";
+        legend.m_entries.push_back(LegendEntry(legendSettlementColor(worldgen::SettlementKind::Town),
+            "town", "a market most of the time, and a reason for the roads to meet"));
+        legend.m_entries.push_back(LegendEntry(legendSettlementColor(worldgen::SettlementKind::Village),
+            "village", "a market some of the time, and somewhere to be buried"));
+        legend.m_entries.push_back(LegendEntry(legendSettlementColor(worldgen::SettlementKind::Hamlet),
+            "hamlet", "a few households"));
+        legend.m_entries.push_back(LegendEntry(legendSettlementColor(worldgen::SettlementKind::Steading),
+            "steading", "one family and their fields"));
+        legend.m_entries.push_back(LegendEntry(glm::ivec3(150, 120, 90), "road",
+            "brighter where more ways run together"));
+        addOcean(legend);
+
+        if(generator)
+        {
+            const std::vector<worldgen::Settlement> &places=generator->getSettlements();
+            size_t people=0;
+
+            for(size_t i=0; i<places.size(); ++i)
+                people+=places[i].m_population;
+
+            legend.m_description+="  "+std::to_string(places.size())+" places, "
+                +std::to_string(people)+" people.";
+        }
+        break;
+
     case DisplayLayers::Remoteness:
         legend.m_title="Beaten track";
         legend.m_description="Distance from the trade network, walked at the cost the ground actually charges.";

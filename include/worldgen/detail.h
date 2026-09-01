@@ -88,6 +88,15 @@ struct DetailThresholds
         //water does not climb, so gaining height along the channel is what the routing pays for
         m_climbPenalty=48.0f;
 
+        //A least-cost path is the straightest line the ground allows, and a real river is not that.
+        //How far it wanders is a fact about the ground rather than a setting: a torrent in a gorge
+        //runs straight because it has nowhere else to go, and a big river on a flood plain wanders
+        //hard because nothing stops it. m_meanderSlope is the gradient above which a river stops
+        //bothering.
+        m_meanderAmplitude=0.16f;   //share of the region it may wander across at its loosest
+        m_meanderWavelength=2.4f;   //loops per traverse of the region
+        m_meanderSlope=0.045f;
+
         //the road paper's re-use weight, which is what makes tributaries join the stem instead of
         //running alongside it
         m_reuseWeight=0.08f;
@@ -131,6 +140,9 @@ struct DetailThresholds
 
     int m_segmentMask;
     float m_climbPenalty;
+    float m_meanderAmplitude;
+    float m_meanderWavelength;
+    float m_meanderSlope;
     float m_reuseWeight;
 
     float m_velocity;
@@ -219,6 +231,17 @@ inline float heightToDepth(float height, float seaLevel, float maxDepth, float c
         return 0.0f;
 
     return maxDepth*std::pow(below, curve);
+}
+
+//How much a river wanders, from the ground rather than from a setting. Steep runs straight; flat
+//and full wanders. Returns 0 to 1.
+inline float sinuosity(float gradient, float discharge, const DetailThresholds &rules)
+{
+    float flat=1.0f-clamp(gradient/rules.m_meanderSlope, 0.0f, 1.0f);
+    float full=clamp(discharge/rules.m_velocityDischarge, 0.0f, 1.0f);
+
+    //a trickle on a plain still wanders, but not as far as a river does
+    return flat*(0.35f+(0.65f*full));
 }
 
 //The exact inverses of the two height curves. Carving works in metres and the rest of the library

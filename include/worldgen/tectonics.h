@@ -121,6 +121,9 @@ struct WORLDGEN_EXPORT InfluenceCell
         traffic(0.0f),
         chokepoint(false),
         city(-1),
+        settlement(-1),
+        road(false),
+        roadTraffic(0.0f),
         remoteness(1.0f),
         onTheBeatenTrack(false),
         ironBearing(false),
@@ -205,6 +208,9 @@ struct WORLDGEN_EXPORT InfluenceCell
     float traffic;          //0 to 1, how much of the world's trade passes through here
     bool chokepoint;        //heavy traffic through ground with no way round it
     int city;               //index of the city that took this spot, -1 for nearly everywhere
+    int settlement;         //index of the steading, hamlet, village or town standing here
+    bool road;              //a way people habitually take between two settlements
+    float roadTraffic;      //how many of those ways run through here, so trunk roads stand out
     float remoteness;       //0 on the trade network, 1 as far off it as this world goes
     bool onTheBeatenTrack;  //close enough to the network that people pass through
     bool ironBearing;       //this deposit also carries iron worth smelting

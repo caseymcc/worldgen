@@ -5331,6 +5331,429 @@ void EquiRectWorldGenerator::generatePlates(Progress &progress)
             }
         }
 
+
+        //--- the places people actually live ---
+        //A realm is a thousand miles of ground and a city is a drain built where flow concentrates.
+        //Neither is what somebody standing in a valley has for a neighbour, so there is a tier
+        //below both: steadings, hamlets, villages and towns, a few miles apart.
+        //
+        //Sited by weighted interest with a hard veto (Emilien et al): every criterion runs from -1
+        //to 1, any single -1 makes the place impossible however good the rest of it is, and the
+        //result is not a decision but a probability - a site is ACCEPTED in proportion to its
+        //interest rather than the best cell being taken, so a good region fills in unevenly the way
+        //a real one does.
+        m_settlements.clear();
+
+        for(size_t i=0; i<influenceMapSize; i++)
+            m_influenceMap[i].settlement=-1;
+
+        if(!species.empty())
+        {
+            const SettlementThresholds &rules=m_descriptorValues.m_settlementRules;
+
+            //"Either an indicator of social superiority or as necessity for defense": how far this
+            //ground stands over what surrounds it, weighted by the inverse square of the distance.
+            std::vector<float> domination(influenceMapSize, 0.0f);
+
+            {
+                int radius=rules.m_dominationRadius;
+                float highest=0.0f;
+
+                for(size_t i=0; i<influenceMapSize; i++)
+                {
+                    if(m_influenceMap[i].heightBase<0.5f)
+                        continue;
+
+                    int x=(int)(i%influenceSize.x);
+                    int y=(int)(i/influenceSize.x);
+                    float sum=0.0f;
+
+                    for(int dy=-radius; dy<=radius; ++dy)
+                    {
+                        int ny=y+dy;
+
+                        if((ny<0)||(ny>=influenceSize.y))
+                            continue;
+
+                        for(int dx=-radius; dx<=radius; ++dx)
+                        {
+                            if((dx==0)&&(dy==0))
+                                continue;
+
+                            float distanceSquared=(float)((dx*dx)+(dy*dy));
+
+                            if(distanceSquared>(float)(radius*radius))
+                                continue;
+
+                            size_t index=((size_t)ny*influenceSize.x)+wrapIndex(x+dx, influenceSize.x);
+
+                            sum+=(elevation[i]-elevation[index])/(1.0f+distanceSquared);
+                        }
+                    }
+
+                    domination[i]=sum;
+                    highest=std::max(highest, fabsf(sum));
+                }
+
+                if(highest>0.0f)
+                {
+                    for(size_t i=0; i<influenceMapSize; i++)
+                        domination[i]=clamp(domination[i]/highest, -1.0f, 1.0f);
+                }
+            }
+
+            //Sociability is the one criterion that changes as the map fills, so it is carried in a
+            //field that later placements read and every placement writes to.
+            std::vector<float> company(influenceMapSize, 0.0f);
+
+            //Biggest first. A town is the hardest to please and wants the most room, and placing it
+            //before the villages lets the smaller places gather around it rather than the other way
+            //about - which is the order settlement hierarchies actually form in.
+            const SettlementKind order[4]=
+            {
+                SettlementKind::Town, SettlementKind::Village,
+                SettlementKind::Hamlet, SettlementKind::Steading
+            };
+
+            //A shuffled walk, so no part of the map is preferred merely for being early in memory.
+            std::vector<size_t> visit(influenceMapSize);
+
+            for(size_t i=0; i<influenceMapSize; i++)
+                visit[i]=i;
+
+            for(size_t k=0; k<4; ++k)
+            {
+                SettlementKind kind=order[k];
+                const SettlementPreference &preference=rules.preference(kind);
+
+                for(size_t i=visit.size(); i>1; --i)
+                {
+                    std::uniform_int_distribution<size_t> pick(0, i-1);
+                    std::swap(visit[i-1], visit[pick(generator)]);
+                }
+
+                for(size_t v=0; v<visit.size(); ++v)
+                {
+                    size_t index=visit[v];
+                    const InfluenceCell &cell=m_influenceMap[index];
+
+                    if(cell.settlement>=0)
+                        continue;
+
+                    if(settlementImpossible(cell, relief[index], rules))
+                        continue;
+
+                    //whose people would live here at all
+                    int who=cell.dominantSpecies;
+
+                    if(who<0)
+                        continue;
+
+                    int x=(int)(index%influenceSize.x);
+                    int y=(int)(index/influenceSize.x);
+
+                    //nothing of this size stands within its own spacing of another of its size
+                    bool crowded=false;
+
+                    for(int dy=-preference.m_spacing; (dy<=preference.m_spacing)&&(!crowded); ++dy)
+                    {
+                        int ny=y+dy;
+
+                        if((ny<0)||(ny>=influenceSize.y))
+                            continue;
+
+                        for(int dx=-preference.m_spacing; dx<=preference.m_spacing; ++dx)
+                        {
+                            int near=m_influenceMap[((size_t)ny*influenceSize.x)
+                                +wrapIndex(x+dx, influenceSize.x)].settlement;
+
+                            if((near>=0)&&(m_settlements[near].m_kind==kind))
+                            {
+                                crowded=true;
+                                break;
+                            }
+                        }
+                    }
+
+                    if(crowded)
+                        continue;
+
+                    SettlementCriteria criteria;
+
+                    criteria.m_water=toInterest(siteWater(cell));
+                    criteria.m_arable=toInterest(siteArable(cell, relief[index]));
+                    criteria.m_grazing=toInterest(siteGrazing(cell));
+                    criteria.m_timber=toInterest(siteTimber(cell));
+                    criteria.m_stone=toInterest(siteStone(cell, relief[index]));
+                    criteria.m_fuel=toInterest(siteFuel(cell));
+                    criteria.m_ore=toInterest(siteOre(cell));
+
+                    //flat enough to build on and to plough, without being a bog
+                    criteria.m_slope=toInterest(1.0f-clamp(relief[index]/rules.m_slopeVeto, 0.0f, 1.0f));
+
+                    criteria.m_sociability=clamp(company[index], -1.0f, 1.0f);
+                    criteria.m_domination=domination[index];
+
+                    //the roads and lanes: how near this place is to ground people already cross
+                    criteria.m_accessibility=cell.onTheBeatenTrack
+                        ?1.0f:toInterest(1.0f-clamp(cell.remoteness*3.0f, 0.0f, 1.0f));
+
+                    float interest=settlementInterest(criteria, species[who], preference);
+
+                    if(interest<preference.m_threshold)
+                        continue;
+
+                    //Accepted in proportion to what the place is worth, not because it was the best
+                    //cell going. This is the whole point of the model: taking the argmax fills a
+                    //region from its single best site outward and looks it, where a probability
+                    //that follows interest leaves the good country busy and the poor country thin.
+                    if(distributionNorm(generator)>(interest*rules.m_acceptance))
+                        continue;
+
+                    Settlement settlement;
+
+                    settlement.m_cell=index;
+                    settlement.m_kind=kind;
+                    settlement.m_species=who;
+                    settlement.m_polity=cell.polity;
+                    settlement.m_interest=interest;
+                    settlement.m_criteria=criteria;
+                    settlement.m_population=(size_t)((float)preference.m_population
+                        *(0.55f+(interest*0.9f)));
+                    settlement.m_reason=settlementReason(settlement);
+
+                    m_influenceMap[index].settlement=(int)m_settlements.size();
+                    m_settlements.push_back(settlement);
+
+                    //Somewhere with people in it draws more people. The pull falls off with
+                    //distance and with how small the place is.
+                    {
+                        int reach=rules.m_sociabilityRadius;
+                        float weight=(float)preference.m_population/1400.0f;
+
+                        for(int dy=-reach; dy<=reach; ++dy)
+                        {
+                            int ny=y+dy;
+
+                            if((ny<0)||(ny>=influenceSize.y))
+                                continue;
+
+                            for(int dx=-reach; dx<=reach; ++dx)
+                            {
+                                float distanceSquared=(float)((dx*dx)+(dy*dy));
+
+                                if(distanceSquared>(float)(reach*reach))
+                                    continue;
+
+                                company[((size_t)ny*influenceSize.x)+wrapIndex(x+dx, influenceSize.x)]
+                                    +=weight/(1.0f+distanceSquared);
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+
+        //--- the ways between them ---
+        //Nothing here decides that four lanes should meet at a town. Each place is joined to a
+        //LARGER one near it, every road is the cheapest line the ground allows, and a road somebody
+        //else has already cut is nearly free to follow. Roads meet at towns because each of them was
+        //separately cheapest, which is the same mechanism that made the borders land on mountains.
+        m_roads.clear();
+
+        for(size_t i=0; i<influenceMapSize; i++)
+        {
+            m_influenceMap[i].road=false;
+            m_influenceMap[i].roadTraffic=0.0f;
+        }
+
+        if(m_settlements.size()>1)
+        {
+            const RoadThresholds &roadRules=m_descriptorValues.m_roadRules;
+            const TradeThresholds &carriage=m_descriptorValues.m_tradeRules;
+
+            //biggest first, so the trunk roads exist for the smaller ways to join
+            std::vector<size_t> byKind(m_settlements.size());
+
+            for(size_t i=0; i<m_settlements.size(); ++i)
+                byKind[i]=i;
+
+            std::sort(byKind.begin(), byKind.end(), [&](size_t a, size_t b)
+                { return (int)m_settlements[a].m_kind>(int)m_settlements[b].m_kind; });
+
+            struct Walker
+            {
+                float m_estimate;
+                float m_cost;
+                size_t m_index;
+
+                bool operator>(const Walker &other) const { return m_estimate>other.m_estimate; }
+            };
+
+            std::vector<float> spent(influenceMapSize);
+            std::vector<size_t> came(influenceMapSize);
+            std::vector<size_t> stamp(influenceMapSize, 0);
+            size_t visitStamp=0;
+
+            for(size_t s=0; s<byKind.size(); ++s)
+            {
+                const Settlement &from=m_settlements[byKind[s]];
+                int ax=(int)(from.m_cell%influenceSize.x);
+                int ay=(int)(from.m_cell/influenceSize.x);
+
+                //the nearest place bigger than this one - a steading walks to its hamlet, a hamlet
+                //to its village, and a town to another town
+                size_t target=m_settlements.size();
+                float nearest=roadRules.m_reach;
+
+                for(size_t t=0; t<m_settlements.size(); ++t)
+                {
+                    if(t==byKind[s])
+                        continue;
+
+                    const Settlement &other=m_settlements[t];
+
+                    if((int)other.m_kind<(int)from.m_kind)
+                        continue;
+
+                    if(((int)other.m_kind==(int)from.m_kind)&&(from.m_kind!=SettlementKind::Town))
+                        continue;
+
+                    int bx=(int)(other.m_cell%influenceSize.x);
+                    int by=(int)(other.m_cell/influenceSize.x);
+                    int dx=abs(bx-ax);
+
+                    if(dx>(int)influenceSize.x/2)
+                        dx=(int)influenceSize.x-dx;
+
+                    float distance=sqrtf((float)((dx*dx)+((by-ay)*(by-ay))));
+
+                    if(distance<nearest)
+                    {
+                        nearest=distance;
+                        target=t;
+                    }
+                }
+
+                if(target>=m_settlements.size())
+                    continue;
+
+                size_t goal=m_settlements[target].m_cell;
+                int gx=(int)(goal%influenceSize.x);
+                int gy=(int)(goal/influenceSize.x);
+
+                //A stamp rather than clearing two arrays of the whole map for every one of a
+                //thousand settlements.
+                visitStamp++;
+
+                std::priority_queue<Walker, std::vector<Walker>, std::greater<Walker>> open;
+
+                spent[from.m_cell]=0.0f;
+                came[from.m_cell]=from.m_cell;
+                stamp[from.m_cell]=visitStamp;
+                open.push(Walker{0.0f, 0.0f, from.m_cell});
+
+                bool arrived=false;
+
+                while(!open.empty())
+                {
+                    Walker current=open.top();
+
+                    open.pop();
+
+                    if(current.m_cost>spent[current.m_index])
+                        continue;
+
+                    if(current.m_index==goal)
+                    {
+                        arrived=true;
+                        break;
+                    }
+
+                    int x=(int)(current.m_index%influenceSize.x);
+                    int y=(int)(current.m_index/influenceSize.x);
+
+                    for(size_t n=0; n<8; ++n)
+                    {
+                        int ny=y+offsets[n][1];
+
+                        if((ny<0)||(ny>=influenceSize.y))
+                            continue;
+
+                        size_t index=((size_t)ny*influenceSize.x)+wrapIndex(x+offsets[n][0], influenceSize.x);
+                        const InfluenceCell &step=m_influenceMap[index];
+
+                        //a road is overland; a ferry is somebody else's problem
+                        if(step.heightBase<0.5f)
+                            continue;
+
+                        float length=((offsets[n][0]!=0)&&(offsets[n][1]!=0))?1.41421f:1.0f;
+                        float run=length*(float)m_descriptorValues.m_influenceGridSize.x
+                            *m_descriptorValues.m_metresPerBlock;
+                        float rise=elevation[index]-elevation[current.m_index];
+                        float climb=(run>0.0f)?std::max(rise/run, 0.0f):0.0f;
+
+                        float cost=travelCost(step, elevation[index], relief[index], false, carriage)
+                            *length*(1.0f+(roadRules.m_climbPenalty*climb));
+
+                        //following a way already cut is nearly free, which is what makes lanes join
+                        //instead of running alongside each other
+                        if(step.road)
+                            cost*=roadRules.m_reuseWeight;
+
+                        float total=current.m_cost+cost;
+
+                        if(total>roadRules.m_searchLimit*carriage.m_landCost*8.0f)
+                            continue;
+
+                        if((stamp[index]==visitStamp)&&(total>=spent[index]))
+                            continue;
+
+                        spent[index]=total;
+                        came[index]=current.m_index;
+                        stamp[index]=visitStamp;
+
+                        int hx=abs(gx-((int)(index%influenceSize.x)));
+
+                        if(hx>(int)influenceSize.x/2)
+                            hx=(int)influenceSize.x-hx;
+
+                        int hy=gy-((int)(index/influenceSize.x));
+                        float remaining=sqrtf((float)((hx*hx)+(hy*hy)))*roadRules.m_reuseWeight;
+
+                        open.push(Walker{total+remaining, total, index});
+                    }
+                }
+
+                if(!arrived)
+                    continue;
+
+                Road road;
+
+                road.m_from=byKind[s];
+                road.m_to=target;
+                road.m_cost=spent[goal];
+                road.m_length=0;
+
+                size_t step=goal;
+
+                while(true)
+                {
+                    m_influenceMap[step].road=true;
+                    m_influenceMap[step].roadTraffic+=1.0f;
+                    road.m_length++;
+
+                    if(came[step]==step)
+                        break;
+
+                    step=came[step];
+                }
+
+                m_roads.push_back(road);
+            }
+        }
+
         //--- resolving what the ruins meant ---
         //The reference splits history in two, and the split is what makes it work. The abstract
         //part happens during world generation - the village worships a legendary creature, but

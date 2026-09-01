@@ -99,6 +99,8 @@ set(worldgen_source
     include/worldgen/generators/equiRectWorldGenerator.h
     source/generators/equiRectWorldGenerator.cpp
     source/generators/detailPass.cpp
+    include/worldgen/worldgen_c.h
+    source/worldgen_c.cpp
 #utils
     source/utils/colorMap.cpp
     include/worldgen/utils/colorMap.h

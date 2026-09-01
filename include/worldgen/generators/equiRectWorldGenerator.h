@@ -15,6 +15,7 @@
 #include "worldgen/polity.h"
 #include "worldgen/trade.h"
 #include "worldgen/city.h"
+#include "worldgen/settlement.h"
 #include "worldgen/history.h"
 #include "worldgen/detail.h"
 #include "worldgen/weather.h"
@@ -130,6 +131,8 @@ struct WORLDGEN_EXPORT EquiRectDescriptors
         m_polityRules=PolityThresholds();
         m_tradeRules=TradeThresholds();
         m_cityRules=CityThresholds();
+        m_settlementRules=SettlementThresholds();
+        m_roadRules=RoadThresholds();
         m_detailRules=DetailThresholds();
 
         //metres of real ground per world block, which sets how big a drainage basin actually is
@@ -230,6 +233,8 @@ struct WORLDGEN_EXPORT EquiRectDescriptors
     PolityThresholds m_polityRules;
     TradeThresholds m_tradeRules;
     CityThresholds m_cityRules;
+    SettlementThresholds m_settlementRules;
+    RoadThresholds m_roadRules;
     DetailThresholds m_detailRules;
     float m_metresPerBlock;
     float m_lapseRate;
@@ -348,11 +353,30 @@ public:
     const std::vector<Polity> &getPolities() { return m_polities; }
     const std::vector<TradeRoute> &getTradeRoutes() { return m_tradeRoutes; }
     const std::vector<City> &getCities() { return m_cities; }
+    const std::vector<Settlement> &getSettlements() { return m_settlements; }
+    const std::vector<Road> &getRoads() { return m_roads; }
+
+    //Places to found a settlement of one's own, best first and kept apart so they are a choice
+    //between countries rather than between corners of one valley. Asked for rather than generated
+    //with the world, because which ground is good depends on who is asking.
+    void findFoundingSites(int species, int count, int spacing, std::vector<FoundingSite> &sites);
     const std::vector<SpeciesHabitat> &getSpecies() { return m_descriptorValues.m_species; }
     const InfluenceMap &getInfluenceMap() { return m_influenceMap; }
     const glm::ivec2 &getInfluenceMapSize() { return m_descriptorValues.m_influenceSize; }
 
     EquiRectDescriptors &getDecriptors() { return m_descriptorValues; }
+
+    //--- for a world that is read back rather than generated ---
+    //Plate tectonics, drainage and stream order are whole-world computations, so a world is
+    //remembered rather than re-derived. These let a loader put the remembered state back; nothing
+    //else should touch them.
+    InfluenceMap &getInfluenceMapForWrite() { return m_influenceMap; }
+    std::vector<Settlement> &getSettlementsForWrite() { return m_settlements; }
+    std::vector<Road> &getRoadsForWrite() { return m_roads; }
+
+    //Restores what is derived from the cells rather than stored beside them - the corner map the
+    //chunk and detail passes interpolate over, which is cheap to recompute and pointless to keep.
+    void rebuildAfterLoad();
 
     int m_plateSeed;
     int m_plateCount;
@@ -364,6 +388,8 @@ public:
     std::vector<Polity> m_polities;
     std::vector<TradeRoute> m_tradeRoutes;
     std::vector<City> m_cities;
+    std::vector<Settlement> m_settlements;
+    std::vector<Road> m_roads;
     std::vector<glm::vec2> m_influencePoints;
     std::vector<std::vector<glm::vec2>> m_influenceLines;
 

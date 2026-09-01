@@ -109,6 +109,58 @@ interpolate the influence map and add per-block noise; they never re-run the ove
 value/distance, collision, terrain scale, weather cell/band, wind direction, temperature, moisture.
 Nearly every stage reads and writes fields on this one struct.
 
+### Settlements
+
+`include/worldgen/settlement.h` + a pass after the beaten-track pass (so accessibility can read
+`remoteness`). The tier below a realm: steadings, hamlets, villages and towns, a few miles apart —
+because a realm is a thousand miles of ground and a city is a coastal drain, and neither is what
+somebody standing in a valley has for a neighbour.
+
+Sited by Emilien et al's weighted interest with a **hard veto**: every criterion runs -1 to 1, and a
+single -1 makes the site impossible however good the rest is (no water, too steep, ice, sea). The
+species supplies the weights on the land itself (`SpeciesHabitat`, already there); the settlement
+SIZE supplies the weights on wanting neighbours, a road and a hill, which keeps it out of a 2D
+(kind x species) table. Interest is not a decision: a site is **accepted in proportion to it**, so
+good country fills in unevenly rather than radiating from its single best cell. Placed biggest
+first, so smaller places gather round the towns, with sociability updated as the map fills.
+
+Measured: 860-1060 places a world, 67-98 towns; **every settlement has water** (the veto holds); and
+the weights discriminate — towns are 97% on the beaten track against 63% for steadings, which is the
+accessibility weight (0.70 vs 0.05) doing its job. Nearest neighbour is 4.1 km at worldgen's own
+scale, which is about right for medieval villages.
+
+`findFoundingSites()` asks the same model on behalf of one people, over EMPTY ground, and returns
+places to found a settlement. It is deliberately not a top-N by interest: that gives four sites of
+the same kind, which is one choice offered four times. Sites are taken best-first but only where the
+CHARACTER has not been offered yet, and each is described by what makes it unusual against the
+average candidate rather than by its highest criterion — otherwise every site on good country gets
+the same sentence about water, because all good country has water.
+
+### Roads
+
+`Road`/`RoadThresholds` in `settlement.h`, a pass after the settlements. Nothing decides that lanes
+should meet at a town: each place is joined to a LARGER one near it, every road is the cheapest line
+the ground allows, and a road somebody already cut costs `m_reuseWeight` to follow. They meet at
+towns because each of them was separately cheapest — the same mechanism that put the borders on
+mountain fronts. Measured: 98% of settlements connected, every town on a road, and **55% of road
+length is shared**, which is the re-use weight actually merging lanes rather than running them
+alongside each other.
+
+### A boundary with no C++ in it
+
+`include/worldgen/worldgen_c.h` + `source/worldgen_c.cpp`. The library's own headers put
+`std::string` and `std::vector` in public signatures, and the two standard libraries do not agree
+about their layout — an Unreal project embedding this had to build with the engine's own clang and
+libc++ before it would link. The C header is plain structs, fixed char arrays and integer handles;
+a caller copies what it wants out and never holds a pointer into a library container. Verified by
+compiling the test as **C** (`gcc -std=gnu99`) and by `nm` showing unmangled `T wgWorldCreate`.
+
+`wgWorldSave`/`wgWorldLoad` carry a magic, a version, `sizeof(InfluenceCell)` and an FNV hash of the
+body. A world is *remembered* rather than re-derived, because plate tectonics and drainage are
+whole-world computations and the noise underneath is not promised to be bit-identical across CPUs.
+Round trip is byte-identical on all 32768 cells; a bent file and a not-a-world are both refused.
+Load 17 ms against 118 ms to generate; 10.6 MB at full fidelity.
+
 ### The detail pass
 
 `generateDetail()` (`source/generators/detailPass.cpp`, types in `include/worldgen/detail.h`) expands

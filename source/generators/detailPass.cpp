@@ -435,6 +435,7 @@ void EquiRectWorldGenerator::generateDetail(const glm::ivec2 &influenceCell, Det
         //Segments come from a coprime mask rather than the eight neighbours, which is what keeps a
         //channel from reading as a staircase.
         std::vector<glm::ivec2> mask=coprimeSegmentMask(rules.m_segmentMask);
+        uint32_t noiseSeed=(uint32_t)m_descriptorValues.seed*0x9E3779B1u;
 
         //biggest river first, so the tributaries have a stem to join
         std::sort(detail.m_entries.begin(), detail.m_entries.end(),
@@ -591,6 +592,96 @@ void EquiRectWorldGenerator::generateDetail(const glm::ivec2 &influenceCell, Det
 
             std::reverse(course.begin(), course.end());
 
+            //--- meander ---
+            //A least-cost path is the straightest line the ground allows, and a real river is not
+            //that. The course is pushed sideways by a wave whose size comes from the ground it
+            //crosses - a torrent in a gorge barely moves, a big river on a plain wanders hard. The
+            //displacement is tapered to nothing at both ends, so the entry and exit the overview
+            //mandated cannot move: this is allowed to change the shape of the river, never where it
+            //enters or leaves the region.
+            {
+                float drop=detail.m_cells[course.front()].elevation
+                    -detail.m_cells[course.back()].elevation;
+                float run=(float)course.size()*metres;
+                float gradient=(run>0.0f)?std::max(drop/run, 0.0f):0.0f;
+                float carried=detail.m_cells[course.back()].discharge;
+
+                if(carried<=0.0f)
+                    carried=sources[s].m_discharge;
+
+                float wander=sinuosity(gradient, carried, rules)
+                    *rules.m_meanderAmplitude*(float)size;
+
+                if((course.size()>8)&&(wander>=1.0f))
+                {
+                    std::vector<size_t> bent;
+
+                    for(size_t i=0; i<course.size(); ++i)
+                    {
+                        int cx=(int)(course[i]%size);
+                        int cy=(int)(course[i]/size);
+                        float along=(float)i/(float)(course.size()-1);
+
+                        //the tangent, so the push is across the flow rather than along it
+                        size_t ahead=course[std::min(i+2, course.size()-1)];
+                        size_t behind=course[(i>=2)?(i-2):0];
+                        float tx=(float)((int)(ahead%size)-(int)(behind%size));
+                        float ty=(float)((int)(ahead/size)-(int)(behind/size));
+                        float length=sqrtf((tx*tx)+(ty*ty));
+
+                        if(length<0.001f)
+                        {
+                            bent.push_back(course[i]);
+                            continue;
+                        }
+
+                        //held at both ends, loosest in the middle
+                        float taper=sinf((float)M_PI*along);
+                        float phase=along*rules.m_meanderWavelength*2.0f*(float)M_PI;
+                        float swing=sinf(phase)
+                            +(0.45f*detailFbm(along*6.0f, (float)((cellY*size)+cy)*0.01f,
+                                noiseSeed+0x5bd1u, 3, 2.0f, 0.5f));
+
+                        float offset=wander*taper*swing*0.5f;
+                        int bx=cx+(int)roundf((-ty/length)*offset);
+                        int by=cy+(int)roundf((tx/length)*offset);
+
+                        bx=std::max(0, std::min(bx, size-1));
+                        by=std::max(0, std::min(by, size-1));
+
+                        //The push can open a gap, so the line is drawn rather than dotted - but a
+                        //cell must never be added twice. A repeat gives that sample two helpings of
+                        //the river's discharge, which widens the channel there for no reason, and
+                        //leaves two entries at the same elevation so the profile stops descending.
+                        size_t landed=((size_t)by*size)+bx;
+
+                        if(!bent.empty())
+                        {
+                            int px=(int)(bent.back()%size);
+                            int py=(int)(bent.back()/size);
+                            int span=std::max(abs(bx-px), abs(by-py));
+
+                            for(int t=1; t<span; ++t)
+                            {
+                                int ix=px+(int)roundf((float)(bx-px)*((float)t/(float)span));
+                                int iy=py+(int)roundf((float)(by-py)*((float)t/(float)span));
+                                size_t between=((size_t)iy*size)+ix;
+
+                                if(between!=bent.back())
+                                    bent.push_back(between);
+                            }
+
+                            if(landed==bent.back())
+                                continue;
+                        }
+
+                        bent.push_back(landed);
+                    }
+
+                    course.swap(bent);
+                }
+            }
+
             for(size_t c=0; c<course.size(); ++c)
                 detail.m_cells[course[c]].channel=true;
 
@@ -621,6 +712,11 @@ void EquiRectWorldGenerator::generateDetail(const glm::ivec2 &influenceCell, Det
         //does not forbid it. Taking a running minimum of the bank height from the head down fixes
         //the profile so the channel descends the whole way, which is the difference between a river
         //and a chain of ponds.
+        //
+        //Per course, deliberately. Walking the whole channel network outward from the exit was
+        //tried instead and is worse: breadth-first order from the mouth is not downstream order
+        //once a channel is braided or looped, so cells that sit level with each other get forced
+        //below one another and between two fifths and seven tenths of the channel stops draining.
         for(size_t c=0; c<courses.size(); ++c)
         {
             const std::vector<size_t> &course=courses[c];
@@ -738,6 +834,25 @@ void EquiRectWorldGenerator::generateDetail(const glm::ivec2 &influenceCell, Det
             }
         }
 
+        //The carve stamps each sample's bed outward from the nearest point on the course, and that
+        //can leave the bed no longer descending: a wide river's disc reaches cells belonging to its
+        //own course several steps away, and a meander brings two distant parts of the same river
+        //side by side. So the profile is enforced AGAIN, after carving rather than only before it.
+        //This is the pass that actually decides whether water can leave.
+        for(size_t c=0; c<courses.size(); ++c)
+        {
+            const std::vector<size_t> &course=courses[c];
+            float bank=std::numeric_limits<float>::max();
+
+            for(size_t i=0; i<course.size(); ++i)
+            {
+                DetailCell &sample=detail.m_cells[course[i]];
+
+                bank=std::min(bank, sample.elevation);
+                sample.elevation=bank;
+                bank-=0.01f;
+            }
+        }
     }
 
     //--- the sea ---
@@ -800,6 +915,247 @@ void EquiRectWorldGenerator::generateDetail(const glm::ivec2 &influenceCell, Det
                 detail.m_lakeSamples++;
         }
     }
+}
+
+
+//Places to found a settlement of one's own. The same interest model the settlements themselves were
+//sited by, asked on behalf of one people, restricted to EMPTY ground, and spread out so the offer
+//is a choice between countries rather than between corners of the same valley.
+void EquiRectWorldGenerator::findFoundingSites(int species, int count, int spacing,
+    std::vector<FoundingSite> &sites)
+{
+    sites.clear();
+
+    const std::vector<SpeciesHabitat> &people=m_descriptorValues.m_species;
+
+    if(m_influenceMap.empty()||people.empty()||(count<=0))
+        return;
+
+    if((species<0)||(species>=(int)people.size()))
+        species=0;
+
+    const SettlementThresholds &rules=m_descriptorValues.m_settlementRules;
+    const SettlementPreference &preference=rules.preference(SettlementKind::Village);
+    const glm::ivec2 &influenceSize=m_descriptorValues.m_influenceSize;
+    const size_t influenceMapSize=m_influenceMap.size();
+
+    if(spacing<1)
+        spacing=1;
+
+    std::vector<FoundingSite> candidates;
+
+    for(size_t i=0; i<influenceMapSize; i++)
+    {
+        const InfluenceCell &cell=m_influenceMap[i];
+
+        //somebody else already lives here, so it is not on offer
+        if(cell.settlement>=0)
+            continue;
+
+        int x=(int)(i%influenceSize.x);
+        int y=(int)(i/influenceSize.x);
+        float lowest=cell.heightBase;
+        float highest=cell.heightBase;
+
+        for(size_t n=0; n<8; ++n)
+        {
+            int ny=y+detailOffsets[n][1];
+
+            if((ny<0)||(ny>=influenceSize.y))
+                continue;
+
+            const InfluenceCell &neighbor=m_influenceMap[((size_t)ny*influenceSize.x)
+                +wrapDetailIndex(x+detailOffsets[n][0], influenceSize.x)];
+
+            lowest=std::min(lowest, neighbor.heightBase);
+            highest=std::max(highest, neighbor.heightBase);
+        }
+
+        float relief=highest-lowest;
+
+        if(settlementImpossible(cell, relief, rules))
+            continue;
+
+        FoundingSite site;
+
+        site.m_cell=i;
+        site.m_polity=cell.polity;
+        site.m_criteria.m_water=toInterest(siteWater(cell));
+        site.m_criteria.m_arable=toInterest(siteArable(cell, relief));
+        site.m_criteria.m_grazing=toInterest(siteGrazing(cell));
+        site.m_criteria.m_timber=toInterest(siteTimber(cell));
+        site.m_criteria.m_stone=toInterest(siteStone(cell, relief));
+        site.m_criteria.m_fuel=toInterest(siteFuel(cell));
+        site.m_criteria.m_ore=toInterest(siteOre(cell));
+        site.m_criteria.m_slope=toInterest(1.0f-clamp(relief/rules.m_slopeVeto, 0.0f, 1.0f));
+        site.m_criteria.m_accessibility=cell.onTheBeatenTrack
+            ?1.0f:toInterest(1.0f-clamp(cell.remoteness*3.0f, 0.0f, 1.0f));
+
+        //Who else is out there, which is half of what the choice is about. Sociability is a
+        //measured fact here rather than a pull: the player is being told who their neighbours would
+        //be, not drawn towards them.
+        site.m_nearestSettlement=-1.0f;
+
+        for(size_t k=0; k<m_settlements.size(); ++k)
+        {
+            int sx=(int)(m_settlements[k].m_cell%influenceSize.x);
+            int sy=(int)(m_settlements[k].m_cell/influenceSize.x);
+            int dx=abs(sx-x);
+
+            if(dx>(int)influenceSize.x/2)
+                dx=(int)influenceSize.x-dx;
+
+            float distance=sqrtf((float)((dx*dx)+((sy-y)*(sy-y))));
+
+            if((site.m_nearestSettlement<0.0f)||(distance<site.m_nearestSettlement))
+                site.m_nearestSettlement=distance;
+
+            if(distance<=(float)rules.m_sociabilityRadius*2.0f)
+            {
+                site.m_neighbours++;
+                site.m_neighbourPopulation+=m_settlements[k].m_population;
+            }
+        }
+
+        site.m_criteria.m_sociability=clamp(((float)site.m_neighbours/4.0f)-1.0f, -1.0f, 1.0f);
+
+        //the prominence term, over the same radius the settlements used
+        {
+            float sum=0.0f;
+            float here=heightToElevation(cell.heightBase, 0.5f,
+                m_descriptorValues.m_maxElevation, m_descriptorValues.m_elevationCurve);
+
+            for(int dy=-rules.m_dominationRadius; dy<=rules.m_dominationRadius; ++dy)
+            {
+                int ny=y+dy;
+
+                if((ny<0)||(ny>=influenceSize.y))
+                    continue;
+
+                for(int dx=-rules.m_dominationRadius; dx<=rules.m_dominationRadius; ++dx)
+                {
+                    if((dx==0)&&(dy==0))
+                        continue;
+
+                    float distanceSquared=(float)((dx*dx)+(dy*dy));
+
+                    if(distanceSquared>(float)(rules.m_dominationRadius*rules.m_dominationRadius))
+                        continue;
+
+                    const InfluenceCell &around=m_influenceMap[((size_t)ny*influenceSize.x)
+                        +wrapDetailIndex(x+dx, influenceSize.x)];
+
+                    sum+=(here-heightToElevation(around.heightBase, 0.5f,
+                        m_descriptorValues.m_maxElevation, m_descriptorValues.m_elevationCurve))
+                        /(1.0f+distanceSquared);
+                }
+            }
+
+            site.m_criteria.m_domination=clamp(sum/1500.0f, -1.0f, 1.0f);
+        }
+
+        site.m_interest=settlementInterest(site.m_criteria, people[species], preference);
+
+        if(site.m_interest<=0.0f)
+            continue;
+
+        candidates.push_back(site);
+    }
+
+    if(candidates.empty())
+        return;
+
+    //What an ordinary offered site looks like, so each one can be described by what makes it
+    //UNUSUAL rather than by whatever scores highest. Taking the maximum gives every site on good
+    //country the same sentence about water, because good country all has water.
+    SettlementCriteria average;
+
+    {
+        float n=(float)candidates.size();
+
+        for(size_t c=0; c<candidates.size(); ++c)
+        {
+            const SettlementCriteria &k=candidates[c].m_criteria;
+
+            average.m_water+=k.m_water/n;
+            average.m_arable+=k.m_arable/n;
+            average.m_grazing+=k.m_grazing/n;
+            average.m_timber+=k.m_timber/n;
+            average.m_stone+=k.m_stone/n;
+            average.m_fuel+=k.m_fuel/n;
+            average.m_ore+=k.m_ore/n;
+            average.m_accessibility+=k.m_accessibility/n;
+            average.m_domination+=k.m_domination/n;
+            average.m_sociability+=k.m_sociability/n;
+        }
+    }
+
+    std::sort(candidates.begin(), candidates.end(),
+        [](const FoundingSite &a, const FoundingSite &b) { return a.m_interest>b.m_interest; });
+
+    //Two passes over the same sorted list. The first takes only sites whose CHARACTER has not been
+    //offered yet, so the four places on the table are four different bets; the second fills whatever
+    //is left by interest alone. Best-first without this gives four of the same kind of place, which
+    //is one choice offered four times.
+    std::vector<std::string> offered;
+
+    for(int pass=0; (pass<2)&&((int)sites.size()<count); ++pass)
+    {
+        for(size_t c=0; (c<candidates.size())&&((int)sites.size()<count); ++c)
+        {
+            FoundingSite site=candidates[c];
+
+            site.m_character=siteCharacter(site);
+
+            if(pass==0)
+            {
+                bool seen=false;
+
+                for(size_t k=0; k<offered.size(); ++k)
+                    seen=seen||(offered[k]==site.m_character);
+
+                if(seen)
+                    continue;
+            }
+
+            int ax=(int)(site.m_cell%influenceSize.x);
+            int ay=(int)(site.m_cell/influenceSize.x);
+            bool tooClose=false;
+
+            for(size_t k=0; k<sites.size(); ++k)
+            {
+                int bx=(int)(sites[k].m_cell%influenceSize.x);
+                int by=(int)(sites[k].m_cell/influenceSize.x);
+                int dx=abs(bx-ax);
+
+                if(dx>(int)influenceSize.x/2)
+                    dx=(int)influenceSize.x-dx;
+
+                if(((dx*dx)+((by-ay)*(by-ay)))<(spacing*spacing))
+                {
+                    tooClose=true;
+                    break;
+                }
+            }
+
+            if(tooClose)
+                continue;
+
+            site.m_reason=foundingReason(site.m_criteria, average);
+            offered.push_back(site.m_character);
+            sites.push_back(site);
+        }
+    }
+}
+
+void EquiRectWorldGenerator::rebuildAfterLoad()
+{
+    if(m_influenceMap.empty())
+        return;
+
+    //The corner values every later pass interpolates over. Derived from the cells, so a file that
+    //carried them would only be a chance to disagree with itself.
+    updateInfluenceNeighbors();
 }
 
 }//namespace worldgen

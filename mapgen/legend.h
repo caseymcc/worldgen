@@ -75,6 +75,19 @@ inline glm::ivec3 legendRuinKindColor(worldgen::RuinKind kind)
     return glm::ivec3(200, 170, 120);   //Monument, the sandstone default
 }
 
+inline glm::ivec3 legendSettlementColor(worldgen::SettlementKind kind)
+{
+    switch(kind)
+    {
+    case worldgen::SettlementKind::Town:     return glm::ivec3(255, 226, 120);
+    case worldgen::SettlementKind::Village:  return glm::ivec3(232, 170, 90);
+    case worldgen::SettlementKind::Hamlet:   return glm::ivec3(198, 128, 78);
+    case worldgen::SettlementKind::Steading: return glm::ivec3(150, 104, 74);
+    default: break;
+    }
+    return glm::ivec3(90, 90, 90);
+}
+
 inline glm::ivec3 legendCityColor(worldgen::NodeType node, bool parasite)
 {
     if(parasite)

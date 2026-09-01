@@ -44,7 +44,8 @@ enum class DisplayLayers
     Control,
     Trade,
     Cities,
-    Remoteness
+    Remoteness,
+    Settlements
 };
 
 static const std::vector<std::pair<DisplayLayers, std::string>> uiDisplayLayers=
@@ -78,7 +79,8 @@ static const std::vector<std::pair<DisplayLayers, std::string>> uiDisplayLayers=
     {DisplayLayers::Control, "Power projection"},
     {DisplayLayers::Trade, "Trade routes"},
     {DisplayLayers::Cities, "Coastal cities"},
-    {DisplayLayers::Remoteness, "Beaten track"}
+    {DisplayLayers::Remoteness, "Beaten track"},
+    {DisplayLayers::Settlements, "Settlements"}
 };
 
 enum class DisplayOverlays

@@ -623,6 +623,42 @@ void WorldViewer::updatePlateInfoTexture(std::vector<GLubyte> &textureBuffer)
             }
             color.a=255;
         }
+        else if(displayLayer == DisplayLayers::Settlements)
+        {
+            if(influenceMap[i].heightBase<0.5f)
+            {
+                color.r=20; color.g=34; color.b=64;
+            }
+            else
+            {//the country, so the places on it stand out against it
+                unsigned char ground=46+(unsigned char)(34.0f*(influenceMap[i].heightBase-0.5f)*2.0f);
+
+                color.r=ground; color.g=ground; color.b=ground;
+
+                if(influenceMap[i].onTheBeatenTrack)
+                {
+                    color.r+=14; color.g+=12; color.b=(unsigned char)(color.b+6);
+                }
+
+                if(influenceMap[i].road)
+                {//the more ways run through a cell, the brighter the road
+                    float use=std::min(influenceMap[i].roadTraffic/4.0f, 1.0f);
+
+                    color.r=(unsigned char)(96.0f+(96.0f*use));
+                    color.g=(unsigned char)(80.0f+(70.0f*use));
+                    color.b=(unsigned char)(62.0f+(40.0f*use));
+                }
+            }
+
+            if(influenceMap[i].settlement>=0)
+            {
+                const std::vector<worldgen::Settlement> &places=m_uiData->generator->getSettlements();
+                glm::ivec3 mark=legendSettlementColor(places[influenceMap[i].settlement].m_kind);
+
+                color.r=mark.r; color.g=mark.g; color.b=mark.b;
+            }
+            color.a=255;
+        }
         else if(displayLayer == DisplayLayers::Habitability)
         {
             if(influenceMap[i].heightBase<0.5f)
